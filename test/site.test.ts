@@ -69,15 +69,16 @@ test('gallery retries the same cursor, prevents concurrent loads, deduplicates a
 
 test('public routing allowlists gallery paths and sends all other paths to a fixed 404', () => {
   const config = JSON.parse(readFileSync(new URL('../deploy/yt0.yml', import.meta.url), 'utf8')).http
-  assert.ok(config.routers['yt0-site'].rule.startsWith('Host(`yt0.cnrd.computer`) && ('))
-  assert.equal(config.routers['yt0-private-deny'].rule, 'Host(`yt0.cnrd.computer`)')
-  // The old host name only redirects, keeping the path, and never reaches the app.
+  assert.ok(config.routers['yt0-site'].rule.startsWith('Host(`v0.cnrd.computer`) && ('))
+  assert.equal(config.routers['yt0-private-deny'].rule, 'Host(`v0.cnrd.computer`)')
+  // The old host names only redirect, keeping the path, and never reaches the app.
   const old = config.routers['yt0-old-host']
-  assert.equal(old.rule, 'Host(`yt0.c-e.group`)')
+  assert.equal(old.rule, 'Host(`yt0.cnrd.computer`) || Host(`yt0.c-e.group`)')
   assert.ok(old.priority > config.routers['yt0-site'].priority)
   assert.ok(old.middlewares.includes('yt0-moved'))
   const moved = config.middlewares['yt0-moved'].redirectRegex
-  assert.equal('https://yt0.c-e.group/v1?x=1'.replace(new RegExp(moved.regex), moved.replacement.replace('${1}', '$1')), 'https://yt0.cnrd.computer/v1?x=1')
+  for (const from of ['https://yt0.c-e.group/v1?x=1', 'https://yt0.cnrd.computer/v1?x=1'])
+    assert.equal(from.replace(new RegExp(moved.regex), moved.replacement.replace('${1}', '$1')), 'https://v0.cnrd.computer/v1?x=1')
   for (const path of ['/','/site.js','/site.css','/api/videos']) assert.ok(config.routers['yt0-site'].rule.includes('Path(`'+path+'`)'))
   assert.ok(!config.routers['yt0-site'].rule.includes('/api/status'))
   assert.ok(!config.routers['yt0-site'].rule.includes('PathPrefix'))

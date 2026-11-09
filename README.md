@@ -4,7 +4,7 @@ This is the engine yt0 behind the artwork [Arranging Data Into Lists](https://cn
 
 > Software that facilitates the downloading of video content that has not been viewed yet. Exhibited as a video installation that displays a montage of the dataset on an inaccessible screen.
 
-**Live:** https://yt0.cnrd.computer/ (original gallery at [/v1](https://yt0.cnrd.computer/v1))
+**Live:** https://v0.cnrd.computer/ (original gallery at [/v1](https://v0.cnrd.computer/v1))
 
 ## What it does
 

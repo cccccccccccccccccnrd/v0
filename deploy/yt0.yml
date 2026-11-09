@@ -2,7 +2,7 @@
   "http": {
     "routers": {
       "yt0-site": {
-        "rule": "Host(`yt0.cnrd.computer`) && (Path(`/`) || Path(`/v1`) || Path(`/site.js`) || Path(`/site.css`) || Path(`/v2`) || Path(`/v2.js`) || Path(`/v2-core.js`) || Path(`/v2.css`) || Path(`/v2-sharp.woff`) || Path(`/v2-script.ttf`) || Path(`/v2-garamond.woff2`) || Path(`/api/videos`))",
+        "rule": "Host(`v0.cnrd.computer`) && (Path(`/`) || Path(`/v1`) || Path(`/site.js`) || Path(`/site.css`) || Path(`/v2`) || Path(`/v2.js`) || Path(`/v2-core.js`) || Path(`/v2.css`) || Path(`/v2-sharp.woff`) || Path(`/v2-script.ttf`) || Path(`/v2-garamond.woff2`) || Path(`/api/videos`))",
         "priority": 200,
         "entryPoints": [
           "websecure"
@@ -18,7 +18,7 @@
         }
       },
       "yt0-private-deny": {
-        "rule": "Host(`yt0.cnrd.computer`)",
+        "rule": "Host(`v0.cnrd.computer`)",
         "priority": 100,
         "entryPoints": [
           "websecure"
@@ -34,7 +34,7 @@
         }
       },
       "yt0-old-host": {
-        "rule": "Host(`yt0.c-e.group`)",
+        "rule": "Host(`yt0.cnrd.computer`) || Host(`yt0.c-e.group`)",
         "priority": 300,
         "entryPoints": [
           "websecure"
@@ -76,8 +76,8 @@
       },
       "yt0-moved": {
         "redirectRegex": {
-          "regex": "^https://yt0\\.c-e\\.group/(.*)",
-          "replacement": "https://yt0.cnrd.computer/${1}",
+          "regex": "^https://(?:yt0\\.cnrd\\.computer|yt0\\.c-e\\.group)/(.*)",
+          "replacement": "https://v0.cnrd.computer/${1}",
           "permanent": false
         }
       }
