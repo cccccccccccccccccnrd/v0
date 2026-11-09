@@ -1,0 +1,12 @@
+{
+  "measuredAt": "2026-10-26T07:04:07.680Z",
+  "attempts": 8,
+  "trials": 8,
+  "budget": 8,
+  "successfulPages": 8,
+  "eligibleObservations": 2,
+  "uniqueEligible": 2,
+  "denied": false,
+  "aborted": false,
+  "archiveUnchanged": true
+}

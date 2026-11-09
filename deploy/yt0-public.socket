@@ -1,0 +1,12 @@
+[Unit]
+Description=yt0 bridge-only frontend socket
+Requires=docker.service
+After=docker.service
+
+[Socket]
+# Existing x_default Docker gateway; never bind this forwarder to a public interface.
+ListenStream=172.22.0.1:3668
+NoDelay=yes
+
+[Install]
+WantedBy=sockets.target

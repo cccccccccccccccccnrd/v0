@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>yt0 dashboard</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #000; color: #fff; font-family: Arial, sans-serif; max-width: 1100px; margin: 24px; line-height: 1.5; }
+    h1, h2, h3, th, strong { font-weight: normal; }
+    a { color: inherit; }
+    code { overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; }
+    table { border-collapse: collapse; width: 100%; }
+    caption { text-align: left; margin-bottom: 8px; }
+    th, td { text-align: left; vertical-align: top; padding: 6px 16px 6px 0; border-bottom: 1px solid #444; overflow-wrap: anywhere; }
+    input { font: inherit; max-width: 100%; box-sizing: border-box; }
+    .table-scroll { overflow-x: auto; }
+    .flow-lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .flow-steps { list-style: none; padding: 0; margin: 0; }
+    .flow-box, .flow-steps li { border: 1px solid #fff; padding: 12px; overflow-wrap: anywhere; }
+    .flow-steps li { position: relative; margin-bottom: 36px; }
+    .flow-steps li::after { content: '↓'; position: absolute; top: 100%; left: 50%; line-height: 36px; }
+    .flow-box { margin: 0 0 36px; }
+    #verification-gate { position: relative; }
+    #verification-gate::after { content: '↓'; position: absolute; top: 100%; left: 50%; line-height: 36px; }
+    section[aria-labelledby="search-flow"] figure { margin: 0; }
+    section[aria-labelledby="search-flow"] figcaption { margin-bottom: 16px; }
+    #learned-table { table-layout: fixed; }
+    #learned-table th:nth-child(1) { width: 32%; }
+    #learned-table th:nth-child(2) { width: 46%; }
+    #learned-table th:nth-child(3), #learned-table th:nth-child(4) { width: 11%; }
+    @media (max-width: 600px) {
+      body { margin: 12px; }
+      .flow-lanes { grid-template-columns: 1fr; gap: 0; }
+      th, td { padding-right: 8px; }
+      #learned-table { min-width: 580px; }
+    }
+  </style>
+</head>
+<body>
+  <h1>yt0</h1>
+  <p>Snapshot: <time datetime="2026-11-02T07:24:30.320Z">November 2, 2026, 07:24 UTC</time>. This file does not update automatically.</p>
+  <nav aria-label="Sections">
+    <a href="#crawler">Crawler</a> · <a href="#search-flow">Search flowchart</a> · <a href="#retention">Archive retention</a> · <a href="#qualifications">Video qualifications</a> · <a href="#discoveries">Discoveries</a> · <a href="#searches">Search terms</a> · <a href="#learned">Learned terms</a> · <a href="#sources">Source availability</a>
+  </nav>
+
+  <section aria-labelledby="crawler">
+    <h2 id="crawler">Crawler</h2>
+    <ul>
+      <li>Service: running. Health check: healthy. No active global pause.</li>
+      <li>Automatic restarts: 0.</li>
+      <li>Release: <code>20261031T120412Z</code>, deployed October 31 at 12:05 UTC.</li>
+      <li><a href="https://yt0.c-e.group/">Public gallery</a>. Operational dashboard and status remain private.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="search-flow">
+    <h2 id="search-flow">How discovery works</h2>
+    <p><strong>Search finds creators; channel feeds expand the discoveries.</strong> A “channel search” is a recurring check of a known creator, not a keyword search across all their uploads.</p>
+    <p>Algorithm reviewed November 4, 2026. The statistics elsewhere on this page remain the dated November 2 snapshot.</p>
+    <figure aria-labelledby="flow-caption">
+      <figcaption id="flow-caption">Two discovery paths → one verification gate → a permanent archive and feedback loops. Read each lane downward; both feed the shared gate below.</figcaption>
+      <div class="flow-lanes">
+        <div>
+          <h3 id="keyword-path">A. Keyword discovery</h3>
+          <ol class="flow-steps" aria-labelledby="keyword-path">
+            <li><strong>Choose a due term + age band.</strong><br>Start with 2,341 bundled terms. Newly archived titles can add more terms. Due searches with credited verified yield get a small preference.</li>
+            <li><strong>Rotate a narrow date slice.</strong><br>Combine the term with <code>before:</code> and <code>after:</code>. Recent / older / archive use 1 / 7 / 30-day slices; two slices per run by default.</li>
+            <li><strong>Read public search video cards.</strong><br>Extract video/channel IDs, duration and zero / positive / unknown view hints. Live/upcoming cards are excluded. “No views” is a lead, not numeric proof.</li>
+            <li><strong>Select candidates and creators.</strong><br>Prioritize zero hints; skip positive hints; admit at most one unknown and up to 40 verification candidates per batch → <a href="#verification-gate">gate C</a>. Explicit-zero hints can also admit up to three creators → <a href="#channel-path">channel loop B</a>.</li>
+          </ol>
+        </div>
+        <div>
+          <h3 id="channel-path">B. Known-channel discovery</h3>
+          <ol class="flow-steps" aria-labelledby="channel-path">
+            <li><strong>Choose a due known creator.</strong><br>Creators enter from explicit-zero hints or newly verified discoveries, within source caps. No subscription, account login or official API key.</li>
+            <li><strong>Read the channel RSS feed.</strong><br>Parse video IDs, publication dates and literal numeric counts for the entries returned. This is a limited recent feed, not the full upload history. A missing/404 feed provides no zero evidence.</li>
+            <li><strong>Batch-match public video metadata.</strong><br>If the feed has an unarchived zero at least seven days old, fetch the creator’s <code>/channel/ID/videos</code> HTML. Check ownership and match video IDs to get duration/static-video eligibility. Skip this fetch otherwise.</li>
+            <li><strong>Queue feed candidates.</strong><br>Use the same bounded selection as A. Carry RSS evidence and matching card metadata into verification; if metadata is missing, verification can try an exact-video-ID search. Continue to <a href="#verification-gate">gate C</a>.</li>
+          </ol>
+        </div>
+      </div>
+      <div class="flow-box" id="verification-gate">
+        <h3>C. Shared verification gate</h3>
+        <p>Deduplicate archived/queued IDs and honor recent-check caches. Young candidates with a known publication date wait until the age cutoff.</p>
+        <p>Use matching card metadata, or search the exact video ID if needed. Require literal RSS <code>views="0"</code> observed at age ≥ 168 hours, matching identities, a nonempty title, positive duration and no live/upcoming metadata or positive count hint. Full rules: <a href="#qualifications">video qualifications</a>.</p>
+        <ul>
+          <li><strong>All checks pass → D below.</strong> Search hints alone never qualify.</li>
+          <li><strong>Too young → wait → verify again.</strong> Refresh a zero count observed before the seven-day cutoff.</li>
+          <li><strong>Positive / missing / unavailable → no archive insertion.</strong> Unknown ≠ zero; failed requests use retry/backoff, not invented counts.</li>
+        </ul>
+      </div>
+      <div class="flow-box">
+        <h3>D. Archive once → feed the next round</h3>
+        <p>Store the original numeric-zero evidence and its timestamp. Later views or gallery clicks do not remove the entry.</p>
+        <ul>
+          <li><strong>Creator feedback → <a href="#channel-path">B</a>:</strong> add or promote the verified creator’s recurring channel job, within capacity.</li>
+          <li><strong>Title feedback → <a href="#keyword-path">A</a>:</strong> take up to two eligible words from the title and seed them in the older age band. This is a word heuristic, not an AI model.</li>
+          <li><strong>Yield feedback → scheduler:</strong> credit the originating job. Channel credit does not flow back to the keyword that originally found the creator.</li>
+        </ul>
+      </div>
+    </figure>
+    <h3>What repeats, and what limits it?</h3>
+    <ul>
+      <li><strong>Channel loop:</strong> normally revisit after 6 hours if the job gained credited discoveries since its previous run, otherwise 12 hours. Empty, never-productive channels can be retired if they have no verified archive or pending candidates.</li>
+      <li><strong>Keyword loop:</strong> rotate date slices; adjust revisit delays using credited yield and empty runs. Idle exploration can advance eligible slices without clearing failures or source cooldowns.</li>
+      <li><strong>Pacing:</strong> search HTTP starts are at least 60 seconds apart by default, including exact-ID lookups and redirect hops. Other permitted work can continue independently; global pauses stop all work. Matching RSS requests can be shared for up to 60 seconds without changing the original observation time.</li>
+      <li><strong>Coverage gap:</strong> a video that has aged out of RSS may be unverifiable even if search finds it. The catalogue supplies eligibility, not replacement numeric-zero evidence. More terms cannot guarantee full coverage or bypass access checks.</li>
+    </ul>
+    <p>Code references: <a href="crawler.ts">enqueueCandidates(), executeTask(), titleTerms()</a>; <a href="provider.ts">searchQuery(), search(), channel(), verify()</a>; <a href="store.ts">claim(), enqueue(), save(), explore()</a>; <a href="network.ts">controlledFetch()</a>; <a href="config.ts">defaults and age bands</a>. Static code explanation, not a new live experiment.</p>
+  </section>
+
+  <section aria-labelledby="retention">
+    <h2 id="retention">Archive retention</h2>
+    <p><strong>Clicking a video does not remove it from yt0.</strong> The archive keeps videos that qualified as zero-view discoveries, even if they later gain views.</p>
+    <ul>
+      <li>The original zero-view evidence and observation time are preserved. Already verified records are not automatically rechecked or overwritten.</li>
+      <li>A gallery thumbnail is a normal link to YouTube. Watching may add a YouTube view; it does not trigger removal from yt0. There is no click-to-delete or watched-video eviction.</li>
+      <li>Filters, pagination and new discoveries can move or hide a video in the current gallery view; they do not delete its archive entry.</li>
+      <li>Retention has no automatic age expiry. Maintenance prunes caches and old metrics, not the verified archive.</li>
+      <li>yt0 saves the archive entry and evidence, not a copy of the video. A later private/deleted YouTube video can remain listed but may no longer play. Keeping an entry is not a guarantee of playback or protection against server/disk loss.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="qualifications">
+    <h2 id="qualifications">Video qualifications</h2>
+    <p>New RSS-verified entries. Rules reviewed November 3, 2026.</p>
+    <pre><code>t_pub := dateOnly(pub) ? utcDayStart(pub) + 24h : timestamp(pub)
+
+eligible :=
+    validTime(t_pub, t_obs) ∧ t_obs − t_pub ≥ 168h
+  ∧ rss.statistics.@views === "0"
+  ∧ validIds(video, channel) ∧ identitiesMatch(rss, metadata)
+  ∧ trim(rss.title) ≠ ""
+  ∧ metadata.matches(video, channel)
+  ∧ isSafeInteger(duration_s) ∧ duration_s &gt; 0
+  ∧ ¬flags.any(LIVE, UPCOMING, SCHEDULED, PREMIERING)
+  ∧ metadata.viewHint ≠ POSITIVE
+
+if eligible:
+    archiveOnce(video, {
+        source: "youtube/rss",
+        field: "media:statistics/@views",
+        rawValue: "0",
+        checkedAt: t_obs
+    })</code></pre>
+    <p>Refresh pre-cutoff zero observations after day seven. Unknown ≠ zero. Shorts allowed; no maximum age. Legacy imports require independent qualification. Playback is not tested.</p>
+    <p>Implementation: <a href="config.ts">age and date checks</a>, <a href="provider.ts">RSS and metadata verification</a>, <a href="store.ts">evidence storage and retention</a>, <a href="public/site.js">gallery links</a>.</p>
+  </section>
+
+  <section aria-labelledby="discoveries">
+    <h2 id="discoveries">Discoveries</h2>
+    <table>
+      <caption>Verified archive additions. Rolling periods overlap.</caption>
+      <thead><tr><th scope="col">Period</th><th scope="col">Records</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Total archived</th><td>1,021</td></tr>
+        <tr><th scope="row">Since deployment, 43 hours 19 minutes</th><td>773</td></tr>
+        <tr><th scope="row">Last 24 hours</th><td>366</td></tr>
+        <tr><th scope="row">Last 6 hours</th><td>3</td></tr>
+        <tr><th scope="row">First 24 hours after deployment</th><td>490</td></tr>
+        <tr><th scope="row">24 hours before deployment</th><td>18</td></tr>
+      </tbody>
+    </table>
+    <p>The first full day produced about 27 times the previous day's additions. Growth is uneven: only 3 additions in the last six hours. This does not establish the cause of the slowdown or a service outage.</p>
+    <p>Videos were observed at literal zero views at least seven days after upload. This is a historical archive, not a claim that they still have zero views.</p>
+
+    <h3>Daily additions</h3>
+    <table>
+      <caption>UTC calendar days, not deployment-relative days. November 2 is partial through 07:24 UTC.</caption>
+      <thead><tr><th scope="col">Date (UTC)</th><th scope="col">Records</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">2026-10-26</th><td>157</td></tr>
+        <tr><th scope="row">2026-10-27</th><td>19</td></tr>
+        <tr><th scope="row">2026-10-28</th><td>31</td></tr>
+        <tr><th scope="row">2026-10-29</th><td>18</td></tr>
+        <tr><th scope="row">2026-10-30</th><td>16</td></tr>
+        <tr><th scope="row">2026-10-31</th><td>380</td></tr>
+        <tr><th scope="row">2026-11-01</th><td>397</td></tr>
+        <tr><th scope="row">2026-11-02 (partial)</th><td>3</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Discovery source</h3>
+    <table>
+      <caption>Records added since deployment, credited to the final discovery task.</caption>
+      <thead><tr><th scope="col">Task</th><th scope="col">Records</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Channel</th><td>694</td></tr>
+        <tr><th scope="row">Search</th><td>79</td></tr>
+      </tbody>
+    </table>
+    <p>Channel credit does not identify which original search found that creator.</p>
+  </section>
+
+  <section aria-labelledby="searches">
+    <h2 id="searches">Search terms</h2>
+    <ul>
+      <li>3,518 distinct terms across 8,200 search jobs.</li>
+      <li>2,341 bundled terms: all 2,220 supplied CSV words, plus filename patterns, topics and multilingual phrases.</li>
+      <li>1,177 additional terms outside the bundled list.</li>
+      <li>Active search at the snapshot: <code>appalled</code>, recent age band.</li>
+    </ul>
+    <p>Bundled examples: <code>IMG</code>, <code>VID</code>, <code>MVI</code>, <code>DSC</code>, <code>untitled</code>, <code>guitar</code>, <code>homework</code>, <code>fishing</code>, <code>tedium</code>, <code>halfhearted</code>.</p>
+    <table>
+      <caption>Terms are combined with rotating <code>before:</code> and <code>after:</code> date filters.</caption>
+      <thead><tr><th scope="col">Age band</th><th scope="col">Upload age</th><th scope="col">Jobs</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Recent</th><td>7–37 days</td><td>2,341</td></tr>
+        <tr><th scope="row">Older</th><td>37–187 days</td><td>3,518</td></tr>
+        <tr><th scope="row">Archive</th><td>187 days back to 2005</td><td>2,341</td></tr>
+      </tbody>
+    </table>
+    <p>Due searches with verified discoveries receive preference. Queued does not mean searched. Search HTTP starts remain at least one minute apart.</p>
+  </section>
+
+  <section aria-labelledby="learned">
+    <h2 id="learned">Learned terms</h2>
+    <p>Top 30 additional terms, ranked by directly credited discoveries, then completed runs. The crawler adds up to two words from each discovered video's title to the older age band. Exact term origin is not stored; terms outside the bundled list are used here as a proxy for learned terms.</p>
+    <p>Non-English terms below have approximate English translations. Names are transliterated; incomplete title fragments are marked. Translations are for reading only: searches use the original text.</p>
+    <p><label for="term-filter">Filter original term or English translation <input id="term-filter" type="search" autocomplete="off"></label></p>
+    <p id="term-count" role="status">30 of 30 terms shown.</p>
+    <div class="table-scroll" role="region" aria-label="Learned terms and English translations" tabindex="0">
+      <table id="learned-table">
+        <caption>Runs are completed jobs, not HTTP requests. Credited records exclude discoveries attributed to later channel jobs.</caption>
+        <thead><tr><th scope="col">Original term</th><th scope="col">English</th><th scope="col">Runs</th><th scope="col">Records</th></tr></thead>
+        <tbody>
+          <tr><td><bdi lang="zh">宇宙文明</bdi></td><td>Cosmic civilization</td><td>15</td><td>7</td></tr>
+          <tr><td><bdi lang="zh">宇宙奧祕</bdi></td><td>Mysteries of the universe</td><td>11</td><td>5</td></tr>
+          <tr><td><bdi lang="zh">内容启发搜索</bdi></td><td>Content-inspired search</td><td>9</td><td>5</td></tr>
+          <tr><td><bdi lang="zh">富爸爸穷爸爸</bdi></td><td>Rich Dad Poor Dad</td><td>5</td><td>4</td></tr>
+          <tr><td><bdi lang="zh">宇宙科普</bdi></td><td>Popular science about the universe</td><td>10</td><td>3</td></tr>
+          <tr><td><bdi lang="zh">从来不是最聪明的人</bdi></td><td>Never the smartest person</td><td>8</td><td>3</td></tr>
+          <tr><td><bdi lang="zh">宇宙未解之謎</bdi></td><td>Unsolved mysteries of the universe</td><td>8</td><td>3</td></tr>
+          <tr><td><bdi lang="zh">宇宙起源</bdi></td><td>Origin of the universe</td><td>10</td><td>2</td></tr>
+          <tr><td><bdi lang="zh">晚年先有福報</bdi></td><td>Blessings first in later life (fragment)</td><td>6</td><td>2</td></tr>
+          <tr><td><bdi lang="zh">六处考古发现带来新的思考</bdi></td><td>Six archaeological discoveries bring new perspectives</td><td>6</td><td>2</td></tr>
+          <tr><td><bdi lang="zh">探索发现</bdi></td><td>Exploration and discovery</td><td>5</td><td>2</td></tr>
+          <tr><td><bdi lang="zh">經驗分享</bdi></td><td>Sharing experience</td><td>8</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">遠離錯誤選擇</bdi></td><td>Avoid wrong choices</td><td>6</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">阿努纳奇</bdi></td><td>Anunnaki (name)</td><td>6</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">探索未知</bdi></td><td>Explore the unknown</td><td>6</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">種磁場</bdi></td><td>…kind of magnetic field (fragment; context unclear)</td><td>5</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">月起守住這3處</bdi></td><td>…month onward, protect these three areas (fragment)</td><td>5</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">宇宙探索進展</bdi></td><td>Progress in space exploration</td><td>5</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">曾仕強</bdi></td><td>Zeng Shiqiang (name)</td><td>4</td><td>1</td></tr>
+          <tr><td><bdi lang="zh">認知提升</bdi></td><td>Improving understanding</td><td>4</td><td>1</td></tr>
+          <tr><td><bdi lang="en">first</bdi></td><td>first</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="en">upload</bdi></td><td>upload</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="und">velora</bdi></td><td>velora (possible name; meaning unknown)</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="en">balls</bdi></td><td>balls</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="zh">一个人就是一家公司</bdi></td><td>One person is a whole company</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="zh">未来10年普通人的结构性机会</bdi></td><td>Structural opportunities for ordinary people in the next ten years</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="zh">牢记犹太人3条经商思维</bdi></td><td>Remember three Jewish approaches to doing business</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="zh">卖什么别指望赚大钱</bdi></td><td>Don't expect to make a fortune selling… (fragment)</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="zh">爬到金字塔顶端的男人</bdi></td><td>The man who climbed to the top of the pyramid</td><td>4</td><td>0</td></tr>
+          <tr><td><bdi lang="zh">都同时具备这5种思维</bdi></td><td>All have these five ways of thinking (fragment)</td><td>4</td><td>0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <noscript><p>All terms and translations are visible without JavaScript. Filtering requires JavaScript.</p></noscript>
+  </section>
+
+  <section aria-labelledby="sources">
+    <h2 id="sources">Source availability</h2>
+    <table>
+      <caption>HTTP responses today, November 2 through 07:24 UTC. These count requests, not unique videos.</caption>
+      <thead><tr><th scope="col">Source</th><th scope="col">HTTP status</th><th scope="col">Responses</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Search</th><td>200</td><td>444</td></tr>
+        <tr><th scope="row">RSS</th><td>200</td><td>9</td></tr>
+        <tr><th scope="row">RSS</th><td>404</td><td>237</td></tr>
+        <tr><th scope="row">RSS</th><td>500</td><td>11</td></tr>
+        <tr><th scope="row">Channel catalogue</th><td>200</td><td>3</td></tr>
+      </tbody>
+    </table>
+    <p>704 actual requests and 17 task errors today. Unavailable counts never mean zero. Current health does not mean uninterrupted access.</p>
+    <h3>Queue</h3>
+    <table>
+      <caption>Pending and recurring work, not completed coverage.</caption>
+      <thead><tr><th scope="col">Job type</th><th scope="col">Jobs</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Search</th><td>8,200</td></tr>
+        <tr><th scope="row">Channel</th><td>229</td></tr>
+        <tr><th scope="row">Verification</th><td>253</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="notes">
+    <h2 id="notes">Sources and limits</h2>
+    <ul>
+      <li>Production aggregates were read over SSH from SQLite in read-only mode. Health and service state were checked separately immediately afterward.</li>
+      <li>No collector, requests to YouTube, deployments or restarts were started to build this file. The existing crawler continued running independently.</li>
+      <li>The 111-test efficiency release passed at deployment. This snapshot is not a fresh dependency audit or a recheck of video counts.</li>
+      <li>Translations are approximate assistant-written glosses, not independently reviewed translations or endorsements of title claims.</li>
+      <li>Offline reference: <a href="README.md">runbook</a>, <a href="seeds.txt">bundled terms</a>, <a href="experiments/yield-2026-10-30/REPORT.md">efficiency report</a>.</li>
+    </ul>
+  </section>
+
+  <script>
+    const filter = document.getElementById('term-filter')
+    const rows = [...document.querySelectorAll('#learned-table tbody tr')]
+    filter.addEventListener('input', () => {
+      const query = filter.value.trim().toLocaleLowerCase('en')
+      let count = 0
+      for (const row of rows) {
+        const text = row.cells[0].textContent + ' ' + row.cells[1].textContent
+        row.hidden = !text.toLocaleLowerCase('en').includes(query)
+        if (!row.hidden) count++
+      }
+      document.getElementById('term-count').textContent = `${count} of ${rows.length} terms shown.`
+    })
+  </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[Unit]
+Description=yt0 V2 continuous discovery
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/yt0/V2
+StateDirectory=yt0
+StateDirectoryMode=0700
+Environment=DATA_DIR=/var/lib/yt0
+Environment=HOST=127.0.0.1
+Environment=PORT=3667
+EnvironmentFile=-/etc/yt0-v2.env
+ExecStart=/usr/bin/node main.ts
+Restart=always
+RestartSec=10
+TimeoutStopSec=45
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+MemoryHigh=768M
+MemoryMax=1G
+OOMPolicy=stop
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

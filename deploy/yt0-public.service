@@ -1,0 +1,15 @@
+[Unit]
+Description=yt0 Docker bridge to private archive server
+Requires=yt0-public.socket
+After=yt0-public.socket yt0-v2.service
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --connections-max=64 127.0.0.1:3667
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+Restart=on-failure

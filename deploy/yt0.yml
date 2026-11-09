@@ -1,0 +1,97 @@
+{
+  "http": {
+    "routers": {
+      "yt0-site": {
+        "rule": "Host(`yt0.cnrd.computer`) && (Path(`/`) || Path(`/v1`) || Path(`/site.js`) || Path(`/site.css`) || Path(`/v2`) || Path(`/v2.js`) || Path(`/v2-core.js`) || Path(`/v2.css`) || Path(`/v2-sharp.woff`) || Path(`/v2-script.ttf`) || Path(`/v2-garamond.woff2`) || Path(`/api/videos`))",
+        "priority": 200,
+        "entryPoints": [
+          "websecure"
+        ],
+        "service": "yt0",
+        "middlewares": [
+          "yt0-limit",
+          "yt0-root",
+          "yt0-headers"
+        ],
+        "tls": {
+          "certResolver": "letsencrypt"
+        }
+      },
+      "yt0-private-deny": {
+        "rule": "Host(`yt0.cnrd.computer`)",
+        "priority": 100,
+        "entryPoints": [
+          "websecure"
+        ],
+        "service": "yt0",
+        "middlewares": [
+          "yt0-limit",
+          "yt0-deny",
+          "yt0-headers"
+        ],
+        "tls": {
+          "certResolver": "letsencrypt"
+        }
+      },
+      "yt0-old-host": {
+        "rule": "Host(`yt0.c-e.group`)",
+        "priority": 300,
+        "entryPoints": [
+          "websecure"
+        ],
+        "service": "yt0",
+        "middlewares": [
+          "yt0-limit",
+          "yt0-moved"
+        ],
+        "tls": {
+          "certResolver": "letsencrypt"
+        }
+      }
+    },
+    "middlewares": {
+      "yt0-root": {
+        "replacePathRegex": {
+          "regex": "^/$",
+          "replacement": "/v2"
+        }
+      },
+      "yt0-deny": {
+        "replacePath": {
+          "path": "/__not_public__"
+        }
+      },
+      "yt0-limit": {
+        "rateLimit": {
+          "average": 5,
+          "burst": 20
+        }
+      },
+      "yt0-headers": {
+        "headers": {
+          "stsSeconds": 31536000,
+          "contentTypeNosniff": true,
+          "referrerPolicy": "no-referrer"
+        }
+      },
+      "yt0-moved": {
+        "redirectRegex": {
+          "regex": "^https://yt0\\.c-e\\.group/(.*)",
+          "replacement": "https://yt0.cnrd.computer/${1}",
+          "permanent": false
+        }
+      }
+    },
+    "services": {
+      "yt0": {
+        "loadBalancer": {
+          "servers": [
+            {
+              "url": "http://172.22.0.1:3668"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

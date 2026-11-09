@@ -1,11 +1,9 @@
-node_modules
+node_modules/
+data/
 .env
+*.log
 .DS_Store
-*.backup
-*.mp4
-*.mp3
-*.txt
-
-*.db*
-utils/data/*
-channels.json
+# Commercial font (Aston Script Bold, TRF, all rights reserved): deployed from a licensed local copy, never published.
+public/v2-script.ttf
+# Server runbook (hosts, backup paths) stays private.
+deploy/PRODUCTION.md

@@ -1,202 +1,35 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>𝒜𝓇𝓇𝒶𝓃𝑔𝒾𝓃𝑔 𝒟𝒶𝓉𝒶 𝐼𝓃𝓉𝑜 𝐿𝒾𝓈𝓉𝓈*</title>
-    <style>
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-      }
-
-      body {
-        display: flex;
-        flex-flow: column;
-        background: black;
-        color: white;
-        font-size: 12px;
-        margin: 0.666em;
-      }
-
-      img {
-        max-width: 100%;
-        width: 30vw;
-      }
-
-      p {
-        margin: 0;
-      }
-
-      a {
-        display: flex;
-      }
-
-      header {
-        position: fixed;
-        top: 0;
-        left: 0;
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 0.666em;
-        padding: 0.666em;
-        background: black;
-        z-index: 10;
-      }
-
-      select {
-        overflow: hidden;
-        width: 100%;
-      }
-
-      #v0 {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 0.666em;
-        margin: calc(0.666em * 4) 0 0 0;
-      }
-
-      .v {
-        position: relative;
-        display: flex;
-        flex-flow: column;
-        overflow: hidden;
-      }
-
-      .v p {
-        margin: 0 0 0.333em 0;
-      }
-
-      span {
-        font-family: monospace;
-        font-size: 0.9em;
-      }
-
-      @media (max-width: 600px) {
-        #v0 {
-          grid-template-columns: repeat(3, 1fr);
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <header></header>
-    <div id="v0"></div>
-
-    <script>
-      let v0 = []
-      let videos = []
-      let page = 1
-
-      window.addEventListener('scroll', async function (e) {
-        if (window.innerHeight + Math.round(window.scrollY) >= document.body.offsetHeight) {
-          page++
-          await get()
-          ui()
-        }
-      })
-
-      function res(cur, ns) {
-        var undef
-        ns = ns.split('.')
-        while (cur && ns[0]) cur = cur[ns.shift()] || undef
-        return cur
-      }
-
-      function ui() {
-        document.getElementById('v0').innerHTML = ''
-
-        for (const v of videos) {
-          const div = document.createElement('div')
-          div.classList.add('v')
-
-          const p = document.createElement('p')
-          p.innerHTML = `<span>${v.uploadDate}</span> ${v.title} (${v.timestamp})`
-          div.appendChild(p)
-
-          const a = document.createElement('a')
-          a.href = v.url
-          a.target = '_blank'
-
-          const img = document.createElement('img')
-          img.src = v.thumbnail
-          img.alt = v.title
-
-          a.appendChild(img)
-          div.appendChild(a)
-
-          document.getElementById('v0').appendChild(div)
-        }
-      }
-
-      async function get() {
-        const response = await fetch(`/yt/0?page=${page}`)
-        const data = await response.json()
-        v0 = [...v0, ...data.videos]
-        videos = [...videos, ...data.videos]
-        console.log(videos.length)
-      }
-
-      async function init() {
-        await get()
-
-        const selects = [
-          {
-            id: 'title',
-            s: ['', ...new Set(videos.map((v) => v.title))]
-          },
-          {
-            id: 'author.name',
-            s: ['', ...new Set(videos.map((v) => v.author.name))]
-          },
-          {
-            id: 'timestamp',
-            s: [
-              '',
-              ...new Set(
-                videos
-                  .map((v) => v.timestamp)
-                  .sort()
-                  .filter(Boolean)
-              )
-            ]
-          },
-          {
-            id: 'uploadDate',
-            s: ['', ...new Set(videos.map((v) => v.uploadDate).sort())]
-          },
-          {
-            id: 'meta.q',
-            s: ['', ...new Set(videos.map((v) => v.meta.q))]
-          }
-        ].map((s) => {
-          const select = document.createElement('select')
-          select.id = s.id
-          s.s.forEach((v) => {
-            const o = document.createElement('option')
-            o.value = v
-            o.textContent = v
-            select.appendChild(o)
-          })
-          document.querySelector('header').appendChild(select)
-          select.addEventListener('change', () => {
-            if (select.value === '') {
-              videos = v0
-            } else {
-              videos = v0.filter((v) => res(v, select.id) === select.value)
-              console.log(videos.length)
-            }
-            ui()
-          })
-        })
-
-        ui()
-      }
-
-      init()
-    </script>
-  </body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>yt0 — the overlooked archive</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><h1>yt0 <span>V2</span></h1><p>The overlooked archive.</p></div>
+    <p id="connection" role="status">Connecting…</p>
+  </header>
+  <main>
+    <section aria-labelledby="status-title" class="panel">
+      <h2 id="status-title">Continuous discovery</h2>
+      <p id="status" aria-live="polite">Loading crawler status…</p>
+      <p id="queue"></p>
+      <details><summary>Recent crawler errors</summary><pre id="errors">None</pre></details>
+    </section>
+    <section aria-labelledby="archive-title">
+      <div class="toolbar">
+        <h2 id="archive-title">Zero at discovery</h2>
+        <label>Filter loaded videos <input id="filter" type="search" placeholder="Title or channel"></label>
+      </div>
+      <p class="note">Observed at exactly zero views, at least seven days after upload. This is a historical archive, not a live count. Opening a video may give it a view. Legacy imports are labeled separately until verified.</p>
+      <div id="videos" class="grid" aria-live="polite"></div>
+      <p id="message" role="status"></p>
+      <button id="more" type="button">Load more</button>
+    </section>
+  </main>
+  <footer>No media is downloaded or played by the crawler.</footer>
+</body>
 </html>

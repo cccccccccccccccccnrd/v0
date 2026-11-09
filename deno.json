@@ -1,7 +1,0 @@
-{
-  "tasks": {
-    "start": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv main.ts",
-    "yt": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv yt/main.ts init"
-  },
-  "nodeModulesDir": "auto"
-}

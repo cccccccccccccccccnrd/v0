@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yt0 engine 4 arranging data into lists</title>
+    <meta name="description" content="software that facilitates the downloading of video content that has not been viewed yet. exhibited as a video installation that displays a montage of the dataset on an inaccessible screen." />
+    <meta property="og:title" content="yt0 engine 4 arranging data into lists" />
+    <meta property="og:description" content="software that facilitates the downloading of video content that has not been viewed yet. exhibited as a video installation that displays a montage of the dataset on an inaccessible screen." />
+    <link rel="stylesheet" href="/v2.css" />
+    <script type="module" src="/v2.js"></script>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="space" aria-label="Interactive map of archived zero-view videos. Use the search panel for a text list." role="img"></canvas>
+      <div id="left">
+      <h1 id="brand"><a href="/" title="Reset to the default view">yt0</a></h1>
+      <div id="controls" aria-label="Space controls">
+        <div class="row" role="group" aria-label="Layout">
+          <button type="button" id="mode-scatter" aria-pressed="true">Axes</button>
+          <button type="button" id="mode-galaxy" aria-pressed="false">Clusters</button>
+        </div>
+        <label class="galaxy-only">Group by <select id="group"></select></label>
+        <label class="scatter-only">X <select id="x"></select></label>
+        <label class="scatter-only">Y <select id="y"></select></label>
+        <label>Color by <select id="color"></select></label>
+        <label>Title topics <select id="k"></select></label>
+        <div id="legend" aria-label="Color legend"></div>
+      </div>
+      <div id="actions" role="toolbar" aria-label="Actions">
+        <button type="button" id="fit" title="Fit all points (F or double-click)">Fit</button>
+        <button type="button" id="random" title="Open a random matching video (R)">Random</button>
+        <button type="button" id="copy" title="Copy a link to this exact view">Copy link</button>
+        <button type="button" id="reset" title="Back to the default view">Reset</button>
+      </div>
+      <div id="artwork" class="cnrd">
+        <div class="up">
+          <a class="proj" href="https://cnrd.computer/#arranging-data-into-lists" target="_blank" rel="noopener">
+            <h2>Arranging Data Into Lists</h2>
+            <p>
+              Software that facilitates the downloading of video content that has not been viewed yet. Exhibited as a
+              video installation that displays a montage of the dataset on an inaccessible screen.
+            </p>
+          </a>
+        </div>
+      </div>
+      </div>
+      <div id="tooltip" role="tooltip" hidden></div>
+      <p id="loading" role="status" aria-live="polite">Loading archive…</p>
+    </div>
+    <aside id="panel">
+      <label class="search"><span>Search</span>
+        <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="words, channel:x, lang:cyrillic, year:<2015, dur:>10m, -status:unverified" />
+      </label>
+      <p id="summary" role="status" aria-live="polite"></p>
+      <section id="detail" hidden></section>
+      <section>
+        <h2>Matches</h2>
+        <ol id="results"></ol>
+      </section>
+      <section id="facets"></section>
+      <p class="note">Each dot is one archived video that showed zero views when found and was at least seven days old. Unverified rows only “looked like zero once”. Topics are k-means clusters of title words; nothing is sent anywhere — all analysis runs in your browser. Keys: / search · F fit · R random · ←/→ prev/next match · +/− zoom · Esc clear. <a href="/v1">Original gallery</a>. Logo font: Web437 Sharp PC3K Alt-2x by VileR (<a href="https://int10h.org/oldschool-pc-fonts/" rel="noopener noreferrer">int10h.org</a>), <a href="https://creativecommons.org/licenses/by-sa/4.0/" rel="noopener noreferrer">CC BY-SA 4.0</a>.</p>
+    </aside>
+  </body>
+</html>

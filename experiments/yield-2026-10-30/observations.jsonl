@@ -1,0 +1,5 @@
+{"time":"2026-10-30T14:26:44.740Z","family":"word-archive","query":"abstemious before:2019-08-31 after:2019-08-01","cards":20,"zeroHints":1,"newCreators":1,"numeric":0}
+{"time":"2026-10-30T14:27:44.086Z","family":"word-older","query":"IMG before:2026-05-27 after:2026-05-20","cards":18,"zeroHints":0,"newCreators":0,"numeric":0}
+{"time":"2026-10-30T14:28:44.759Z","family":"specific-filename","query":"\"MVI_2379\" before:2026-10-23","cards":20,"zeroHints":1,"newCreators":1,"numeric":0}
+{"time":"2026-10-30T14:29:43.984Z","family":"specific-filename-older","query":"\"IMG_0487\" before:2026-10-23 after:2026-04-26","cards":3,"zeroHints":0,"newCreators":0,"numeric":0}
+{"summary":true,"time":"2026-10-30T14:29:43.984Z","selfTest":false,"requests":6,"budget":16,"numeric":0,"creators":2,"stopped":false,"archiveUnchanged":true}

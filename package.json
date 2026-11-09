@@ -1,0 +1,22 @@
+{
+  "name": "yt0-v2",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.12.0" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env main.ts",
+    "seed": "node --env-file-if-exists=.env cli.ts seed",
+    "import": "node --env-file-if-exists=.env cli.ts import",
+    "backup": "node --env-file-if-exists=.env cli.ts backup",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.5.0",
+    "youtubei.js": "18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
