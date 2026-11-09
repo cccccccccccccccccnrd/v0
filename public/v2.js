@@ -295,7 +295,6 @@ function step(dir) {
   const next = at < 0 ? (dir > 0 ? 0 : order.length - 1) : (at + dir + order.length) % order.length
   if (next >= state.resultLimit) { state.resultLimit = Math.ceil((next + 1) / 200) * 200; renderResults() }
   select(order[next]); center(order[next])
-  document.querySelector('#results li.current')?.scrollIntoView({ block: 'nearest' })
 }
 function clearAll() {
   $('q').value = ''
@@ -404,9 +403,8 @@ function current() { return state.matched ? state.docs.filter((d) => state.match
 function renderResults() {
   const list = current()
   const channels = new Set(list.map((d) => d.channelId || d.channel)).size
-  const secs = list.map((d) => d.seconds).filter(Boolean).sort((a, b) => a - b)
   const verified = list.filter((d) => d.verified).length
-  $('summary').textContent = `${list.length.toLocaleString('en-US')} of ${state.docs.length.toLocaleString('en-US')} videos · ${channels.toLocaleString('en-US')} channels · ${verified.toLocaleString('en-US')} verified · median ${formatDuration(secs[Math.floor(secs.length / 2)] || 0)}`
+  $('summary').textContent = `${list.length.toLocaleString('en-US')} of ${state.docs.length.toLocaleString('en-US')} videos · ${channels.toLocaleString('en-US')} channels · ${verified.toLocaleString('en-US')} verified`
   const ol = $('results')
   const words = state.query.toLowerCase().split(/\s+/).filter((w) => w && !w.includes(':'))
   const score = (d) => words.reduce((s, w) => s + (d.title.toLowerCase().includes(w) ? 2 : 0) + (d.channel.toLowerCase().includes(w) ? 1 : 0), 0)
@@ -469,7 +467,6 @@ function renderLegend() {
   const legend = $('legend')
   const rows = colorKeys()
   const frag = document.createDocumentFragment()
-  frag.append(el('p', 'hint', `${CATS[state.color].label}: click to color (max ${SERIES.length}: R G B C M Y K)`))
   const ordered = [...state.pinned.filter((k) => k !== null).map((k) => rows.find(([r]) => r === k) || [k, 0]), ...rows.filter(([k]) => !state.pinned.includes(k))]
   for (const [key, n] of ordered.slice(0, 40)) {
     const slot = state.pinned.indexOf(key)

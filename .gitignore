@@ -7,3 +7,5 @@ data/
 public/v2-script.ttf
 # Server runbook (hosts, backup paths) stays private.
 deploy/PRODUCTION.md
+# Detailed server runbook stays private.
+RUNBOOK.md

@@ -37,7 +37,7 @@ export function createApp(store: Store) {
     }
     res.setHeader('x-content-type-options', 'nosniff')
     res.setHeader('referrer-policy', 'no-referrer')
-    res.setHeader('content-security-policy', "default-src 'self'; img-src https://i.ytimg.com; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+    res.setHeader('content-security-policy', "default-src 'self'; img-src https://i.ytimg.com; style-src 'self'; script-src 'self'; frame-ancestors https://cnrd.computer https://www.cnrd.computer; base-uri 'none'; form-action 'self'")
     if (!['GET','HEAD'].includes(req.method || '')) { res.setHeader('allow','GET, HEAD'); send(405, { error: 'Read-only API' }); return }
     if ((req.url?.length || 0) > 4096) { send(414, { error: 'URL too long' }); return }
     try {

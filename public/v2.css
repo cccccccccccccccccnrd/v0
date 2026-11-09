@@ -32,8 +32,8 @@ html, body { margin: 0; height: 100%; color: var(--ink); background: var(--surfa
 body {
   display: grid; grid-template-columns: 1fr 360px; height: 100vh; overflow: hidden;
   background:
-    radial-gradient(1400px 900px at 20% 120%, rgb(0 0 255 / 0.10), transparent 65%),
-    radial-gradient(1800px 650px at 50% -18%, rgb(0 0 255 / 0.13), transparent 70%),
+    radial-gradient(1400px 900px at 20% 120%, rgb(0 0 255 / 0.22), transparent 65%),
+    radial-gradient(1800px 650px at 50% -18%, rgb(0 0 255 / 0.26), transparent 70%),
     linear-gradient(180deg, #000 0%, #000 50%, #020206 100%);
   background-attachment: fixed;
 }

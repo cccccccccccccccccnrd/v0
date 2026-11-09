@@ -38,6 +38,8 @@ test('HTTP uses bounded keyset pagination and exposes health, status, and CSP-pr
     const response=await fetch(base+path)
     assert.equal(response.status,200,path)
     assert.ok(response.headers.get('content-security-policy')?.includes("script-src 'self'"))
+    // only cnrd.computer may embed yt0 (its project preview panel)
+    assert.ok(response.headers.get('content-security-policy')?.includes('frame-ancestors https://cnrd.computer https://www.cnrd.computer;'))
   }
   const originalSite = await (await fetch(base+'/site/')).text()
   assert.ok(originalSite.includes('𝒜𝓇𝓇𝒶𝓃𝑔𝒾𝓃𝑔'))
