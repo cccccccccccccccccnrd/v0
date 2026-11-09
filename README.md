@@ -15,19 +15,6 @@ This is the engine yt0 behind the artwork [Arranging Data Into Lists](https://cn
 - Paces itself to at most one request per second and one search per minute, and backs off when YouTube pushes back.
 - Serves the archive through a small read-only API and a browser interface. Clustering and search run entirely in the visitor's browser.
 
-## Run it
-
-Requires Node.js 24.12 or newer.
-
-```sh
-npm install
-cp .env.example .env   # optional settings
-npm start              # crawler and server on http://127.0.0.1:3667
-npm test
-```
-
-Open `/v2` for the search space and `/v1` for the gallery. The data lives in `./data/`.
-
 ## Files
 
 | Path | What |
@@ -38,8 +25,3 @@ Open `/v2` for the search space and `/v1` for the gallery. The data lives in `./
 | `server.ts`, `public/` | API and web pages |
 | `cli.ts` | Seed, import and backup commands |
 | `deploy/` | systemd units and proxy route |
-
-## Notes
-
-- The artwork card's script font (Aston Script) is commercial and not included; the title falls back to Arial.
-- The earlier Deno version is at tag `v1-deno-2025`.
