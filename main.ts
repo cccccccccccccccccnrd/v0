@@ -1,4 +1,5 @@
 import { mkdir, statfs } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { config, log } from './config.ts'
 import { openStore } from './store.ts'
@@ -6,6 +7,8 @@ import { controlledFetch, retryDelay, requestContext } from './network.ts'
 import { createProvider } from './provider.ts'
 import { runWorkers, seedFile } from './crawler.ts'
 import { createApp } from './server.ts'
+import { runThumbs } from './thumbs.ts'
+import { startBaking } from './bake.ts'
 
 const cfg = config()
 process.umask(0o077)
@@ -14,7 +17,8 @@ const store = openStore(cfg.database, cfg)
 while (store.retireChannels()) { /* Drain old unproductive source slots before admitting new ones. */ }
 await seedFile(store, new URL('./seeds.txt', import.meta.url))
 const controller = new AbortController()
-const { server, stopping } = createApp(store)
+const snapshotFile = resolve(cfg.dataDir, 'snapshot.json.gz')
+const { server, stopping } = createApp(store, resolve(cfg.dataDir, 'analysis', 'map.json.gz'), snapshotFile)
 store.setMeta('heartbeat', String(Date.now()))
 const beat = setInterval(() => { store.setMeta('heartbeat', String(Date.now())) }, 15_000)
 store.replenishLegacy()
@@ -39,8 +43,10 @@ async function crawl() {
   while (!controller.signal.aborted) {
     try {
       const provider = await createProvider(fetcher, cfg.pages, store.isVerified,
-        name => store.measure(name, requestContext.getStore()?.sourceKey))
-      log('crawler_ready', { workers: cfg.workers, requestsPerSecond: cfg.rps, searchRequestIntervalSeconds: cfg.searchRequestInterval / 1000, minAgeDays: 7, verification: 'rss+public-search' })
+        name => store.measure(name, requestContext.getStore()?.sourceKey), (channelId, floor) => store.setFeedFloor(channelId, floor))
+      log('crawler_ready', { workers: cfg.workers, requestsPerSecond: cfg.rps, searchRequestIntervalSeconds: cfg.searchRequestInterval / 1000, minAgeDays: 7,
+        verification: cfg.playerFallback ? 'rss+public-search+player-fallback' : 'rss+public-search',
+        ...(cfg.playerFallback ? { playerRequestIntervalSeconds: cfg.playerRequestInterval / 1000 } : {}) })
       await runWorkers(store, provider, cfg, controller.signal)
       return
     } catch (error) {
@@ -52,6 +58,9 @@ async function crawl() {
   }
 }
 const workers = crawl()
+const thumbJob = runThumbs(store, cfg, controller.signal).catch((error) => { log('thumbs_error', { error: String(error) }) })
+// Whole archive, newest first, exactly as /api/videos pages it.
+const bakeJob = startBaking(() => store.page(10_000_000), snapshotFile, cfg.snapshotInterval, controller.signal)
 function shutdown() {
   if (ending) return ending
   ending = (async () => {
@@ -59,7 +68,7 @@ function shutdown() {
     stopping()
     controller.abort()
     clearInterval(beat); clearInterval(stats); clearInterval(maintenance)
-    await Promise.allSettled([workers, new Promise<void>((resolve) => server.close(() => resolve()))])
+    await Promise.allSettled([workers, thumbJob, bakeJob, new Promise<void>((resolve) => server.close(() => resolve()))])
     store.close()
   })()
   return ending

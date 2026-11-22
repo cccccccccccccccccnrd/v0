@@ -8,7 +8,7 @@ import { openStore, backupDatabase } from '../store.ts'
 import { config } from '../config.ts'
 import { cfg, id, video, memory, temp, NOW, channel } from './helpers.ts'
 
-test('configuration validates resource limits and keeps separate V2 defaults', () => {
+test('configuration validates resource limits and keeps its defaults', () => {
   assert.equal(cfg.port,3667)
   assert.equal(cfg.host,'127.0.0.1')
   for (const env of [{WORKERS:'0'},{PORT:'0'},{REQUESTS_PER_SECOND:'NaN'},{SEARCH_PAGES:'Infinity'},{WORKERS:'1.5'},{REQUEST_TIMEOUT_MS:''}]) {
@@ -40,7 +40,8 @@ test('RSS archive evidence is accepted only with matching provenance, eligibilit
   record.evidence = { source: 'youtube/rss', field: 'media:statistics/@views', rawValue: '0', checkedAt: NOW }
   assert.equal(store.save(record, '', NOW), true)
   assert.equal(store.save(record, '', NOW + 1), false)
-  assert.throws(() => store.save({ ...record, videoId: id(2), seconds: 0 }, '', NOW), /evidence/)
+  assert.throws(() => store.save({ ...record, videoId: id(2), seconds: -1 }, '', NOW), /evidence/)
+  assert.equal(store.save({ ...record, videoId: id(3), seconds: 0, timestamp: '' }, '', NOW), true, 'an RSS-proven zero may lack a duration')
   assert.throws(() => store.save({ ...record, videoId: id(2), uploadDate: new Date(NOW).toISOString() }, '', NOW), /evidence/)
   assert.throws(() => store.save({ ...record, videoId: id(2), evidence: { ...record.evidence, field: 'videoDetails.viewCount' } }, '', NOW), /evidence/)
 })
@@ -142,14 +143,16 @@ test('verified archives persist, retain first evidence, and have transactional c
   assert.throws(()=>store.save({...video(3),evidence:{...video(3).evidence,rawValue:'1' as '0'}},''),/evidence/)
 })
 
-test('legacy import is atomic, idempotent, explicitly unverified, and backfills a bounded verification queue', (t) => {
-  const store=memory(t,{...cfg,maxPending:2})
-  const legacy=[1,2,3].map((n)=>({...video(n),views:n===3?10:0,meta:{q:'old',timestamp:NOW-1_000_000}}))
-  assert.throws(()=>store.importLegacy([legacy[0],{}],NOW),/legacy/)
-  assert.equal(store.page(10).length,0)
-  assert.equal(store.taskCount('verify'),0)
-  assert.equal(store.importLegacy(legacy,NOW),3)
-  assert.equal(store.importLegacy(legacy,NOW),0)
+// Legacy rows came from imports of the old app's archive; they stay in existing databases and keep being rechecked.
+test('legacy archive rows stay explicitly unverified and refill a bounded verification queue', (t) => {
+  const file=join(temp(t),'yt0.sqlite')
+  openStore(file,cfg).close()
+  const raw=new DatabaseSync(file)
+  for(const n of [1,2,3]) raw.prepare("INSERT INTO videos VALUES(?,?,?,?,'legacy')").run(id(n),NOW-1_000_000,'old',JSON.stringify({...video(n),views:n===3?10:0}))
+  raw.close()
+  const store=openStore(file,{...cfg,maxPending:2})
+  t.after(()=>store.close())
+  store.replenishLegacy(NOW)
   assert.equal(store.taskCount('verify'),2)
   assert.ok(store.page(10).every((v)=>v.verification==='legacy'))
   for(let i=0;i<2;i++) {
@@ -224,26 +227,17 @@ test('incompatible and future databases are refused without modifying their sche
   assert.throws(()=>openStore(path,cfg),/Incompatible/)
 })
 
-test('CLI can seed, stream a read-only V1 SQLite import, and back up without launching a crawler', (t) => {
+test('CLI can seed and back up without launching a crawler', (t) => {
   const dir=temp(t)
-  const sourcePath=join(dir,'v1.sqlite')
-  const source=new DatabaseSync(sourcePath)
-  source.exec('CREATE TABLE videos(record TEXT)')
-  source.prepare('INSERT INTO videos VALUES(?)').run(JSON.stringify(video()))
-  source.close()
   const seed=join(dir,'seeds.txt')
   writeFileSync(seed,'word\nword\n# comment\nsecond\n')
   const run=(args:string[])=>spawnSync(process.execPath,[new URL('../cli.ts',import.meta.url).pathname,...args],{
     encoding:'utf8',env:{...process.env,DATA_DIR:join(dir,'data')}
   })
-  for(const args of [['seed',seed],['import','--sqlite',sourcePath],['backup',join(dir,'backup.sqlite')]]) {
+  for(const args of [['seed',seed],['backup',join(dir,'backup.sqlite')]]) {
     const result=run(args);assert.equal(result.status,0,result.stderr)
   }
   const db=openStore(join(dir,'data/yt0.sqlite'),cfg)
   assert.equal(db.taskCount('search'),6)
-  assert.equal(db.page(10)[0].verification,'legacy')
   db.close()
-  const unchanged=new DatabaseSync(sourcePath,{readOnly:true})
-  assert.equal(unchanged.prepare('SELECT count(*) AS n FROM videos').get()!.n,1)
-  unchanged.close()
 })

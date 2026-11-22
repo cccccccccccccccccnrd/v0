@@ -2,7 +2,7 @@
   "http": {
     "routers": {
       "yt0-site": {
-        "rule": "Host(`v0.cnrd.computer`) && (Path(`/`) || Path(`/v1`) || Path(`/site.js`) || Path(`/site.css`) || Path(`/v2`) || Path(`/v2.js`) || Path(`/v2-core.js`) || Path(`/v2.css`) || Path(`/v2-sharp.woff`) || Path(`/v2-script.ttf`) || Path(`/v2-garamond.woff2`) || Path(`/api/videos`))",
+        "rule": "Host(`v0.cnrd.computer`) && (Path(`/`) || Path(`/v2`) || Path(`/app.js`) || Path(`/core.js`) || Path(`/style.css`) || Path(`/sharp.woff`) || Path(`/script.ttf`) || Path(`/garamond.woff2`) || Path(`/api/videos`) || Path(`/api/map`) || Path(`/api/snapshot`))",
         "priority": 200,
         "entryPoints": [
           "websecure"
@@ -10,7 +10,6 @@
         "service": "yt0",
         "middlewares": [
           "yt0-limit",
-          "yt0-root",
           "yt0-headers"
         ],
         "tls": {
@@ -50,12 +49,6 @@
       }
     },
     "middlewares": {
-      "yt0-root": {
-        "replacePathRegex": {
-          "regex": "^/$",
-          "replacement": "/v2"
-        }
-      },
       "yt0-deny": {
         "replacePath": {
           "path": "/__not_public__"

@@ -1,4 +1,4 @@
-// yt0 /v2 analysis core: pure functions, no DOM. Imported by v2.js and by tests.
+// yt0 dashboard analysis core: pure functions, no DOM. Imported by app.js and by tests.
 export const DIMS = 4096
 const DAY = 86_400_000
 
@@ -93,8 +93,8 @@ export function buildDocs(rows) {
     return {
       i, id: v.videoId, title, channel: decodeEntities(v.author?.name), channelId: v.author?.id || '',
       term: v.meta?.q || '', seconds: Number(v.seconds) || 0, upload: Number.isFinite(upload) ? upload : NaN,
-      found: Number(v.foundAt) || 0, verified: v.verification === 'verified', fromV1: v.evidence?.source === 'arranging/v1', script: scriptOf(title), tokens,
-      duration: durationBucket(Number(v.seconds) || 0)
+      found: Number(v.foundAt) || 0, verified: v.verification === 'verified', fromOldCrawler: v.evidence?.source === 'arranging/v1', script: scriptOf(title), tokens,
+      duration: durationBucket(Number(v.seconds) || 0), look: lookFeatures(v.look), lookRaw: v.look
     }
   })
   const df = new Map()
@@ -119,6 +119,76 @@ export function buildDocs(rows) {
     d.termSize = termSize.get(d.term)
   }
   return { docs, idf }
+}
+
+// ---------- thumbnail look (user request 2026-11-20) ----------
+// The server sends a 4×4 RGB average of each small thumbnail (48 bytes, base64url). Each cell becomes
+// lightness plus two colour-opponent axes, so distance follows how alike two thumbnails look at a glance.
+export const LOOK_DIMS = 48
+export function lookFeatures(text) {
+  if (typeof text !== 'string' || text.length !== 64 || !/^[\w-]+$/.test(text)) return null
+  const bin = atob(text.replaceAll('-', '+').replaceAll('_', '/'))
+  const f = new Float32Array(LOOK_DIMS)
+  for (let c = 0; c < 16; c++) {
+    const r = bin.charCodeAt(c * 3) / 255, g = bin.charCodeAt(c * 3 + 1) / 255, b = bin.charCodeAt(c * 3 + 2) / 255
+    f[c * 3] = (r + g + b) / 3; f[c * 3 + 1] = (r - g) * 0.8; f[c * 3 + 2] = ((r + g) / 2 - b) * 0.8
+  }
+  return f
+}
+const sq = (a, b) => { let s = 0; for (let j = 0; j < LOOK_DIMS; j++) { const t = a[j] - b[j]; s += t * t } return s }
+
+/** Euclidean k-means++ on look vectors; deterministic for a seed. Docs without a look get -1. */
+export function lookKmeans(docs, k, seed = 5, iterations = 30) {
+  const live = docs.filter((d) => d.look)
+  const assign = new Int32Array(docs.length).fill(-1)
+  if (!live.length) return { assign, centroids: [] }
+  k = Math.max(1, Math.min(k, live.length))
+  const random = rng(seed)
+  const centroids = [Float64Array.from(live[Math.floor(random() * live.length)].look)]
+  const best = new Float64Array(live.length).fill(Infinity)
+  while (centroids.length < k) {
+    let total = 0
+    for (let i = 0; i < live.length; i++) { best[i] = Math.min(best[i], sq(live[i].look, centroids.at(-1))); total += best[i] }
+    let pick = random() * total, chosen = live.length - 1
+    for (let i = 0; i < live.length; i++) { pick -= best[i]; if (pick <= 0) { chosen = i; break } }
+    centroids.push(Float64Array.from(live[chosen].look))
+  }
+  for (let it = 0; it < iterations; it++) {
+    let moved = 0
+    for (const d of live) {
+      let top = Infinity, arg = 0
+      for (let c = 0; c < centroids.length; c++) { const s = sq(d.look, centroids[c]); if (s < top) { top = s; arg = c } }
+      if (assign[d.i] !== arg) { assign[d.i] = arg; moved++ }
+    }
+    const sums = centroids.map(() => new Float64Array(LOOK_DIMS)), counts = new Int32Array(centroids.length)
+    for (const d of live) { const s = sums[assign[d.i]]; counts[assign[d.i]]++; for (let j = 0; j < LOOK_DIMS; j++) s[j] += d.look[j] }
+    for (let c = 0; c < centroids.length; c++) if (counts[c]) { for (let j = 0; j < LOOK_DIMS; j++) sums[c][j] /= counts[c]; centroids[c] = sums[c] }
+    if (!moved) break
+  }
+  return { assign, centroids }
+}
+
+/** Names a look cluster by its average tone and colour, plus "bright centre"/"dark centre" when the middle stands out. */
+export function lookLabel(centroid) {
+  let l = 0, a = 0, b = 0, mid = 0, edge = 0
+  for (let c = 0; c < 16; c++) {
+    l += centroid[c * 3] / 16; a += centroid[c * 3 + 1] / 16; b += centroid[c * 3 + 2] / 16
+    const x = c % 4, y = Math.floor(c / 4)
+    if (x > 0 && x < 3 && y > 0 && y < 3) mid += centroid[c * 3] / 4; else edge += centroid[c * 3] / 12
+  }
+  const tone = l < 0.22 ? 'dark' : l > 0.68 ? 'light' : ''
+  // Back to mean RGB for a standard hue angle.
+  const s = (b / 0.8 + 3 * l) / 1.5, R = (s + a / 0.8) / 2, G = (s - a / 0.8) / 2, B = 3 * l - s
+  const max = Math.max(R, G, B), min = Math.min(R, G, B)
+  let hue
+  if (max - min > 0.08) {
+    const h = max === R ? (60 * ((G - B) / (max - min)) + 360) % 360 : max === G ? 60 * ((B - R) / (max - min)) + 120 : 60 * ((R - G) / (max - min)) + 240
+    hue = h < 15 ? 'red' : h < 45 ? 'orange' : h < 70 ? 'yellow' : h < 160 ? 'green' : h < 200 ? 'teal' : h < 260 ? 'blue' : h < 300 ? 'purple' : h < 340 ? 'pink' : 'red'
+  } else hue = tone === 'dark' ? 'black' : tone === 'light' ? 'white' : 'grey'
+  const words = [hue === 'black' || hue === 'white' ? '' : tone, hue].filter(Boolean)
+  if (mid - edge > 0.12) words.push('bright centre')
+  else if (edge - mid > 0.12) words.push('dark centre')
+  return words.join(' ')
 }
 
 function dot(d, dense) {
@@ -181,7 +251,10 @@ export function clusterLabels(docs, assign, k, idf) {
 }
 
 /** First two principal components of the title vectors (power iteration with deflation). */
-export function pca2(docs, seed = 3) {
+export function pca2(docs, seed = 3) { return pcaModel(docs, seed).pcs }
+
+/** pca2 plus the components, so videos added later can be projected without recomputing (projectPca). */
+export function pcaModel(docs, seed = 3) {
   const n = docs.length
   const mean = new Float64Array(DIMS)
   for (const d of docs) for (let j = 0; j < d.idx.length; j++) mean[d.idx[j]] += d.val[j] / n
@@ -206,7 +279,65 @@ export function pca2(docs, seed = 3) {
     comps.push(v)
   }
   const mv = comps.map((v) => mean.reduce((s, m, j) => s + m * v[j], 0))
-  return docs.map((d) => [dot(d, comps[0]) - mv[0], dot(d, comps[1]) - mv[1]])
+  return { comps, mv, pcs: docs.map((d) => [dot(d, comps[0]) - mv[0], dot(d, comps[1]) - mv[1]]) }
+}
+export function projectPca(d, model) { return [dot(d, model.comps[0]) - model.mv[0], dot(d, model.comps[1]) - model.mv[1]] }
+
+// ---------- baked snapshot helpers (user request 2026-11-21: cluster on the server every hour, not in every browser) ----------
+
+/** Duplicate labels get a number so every group stays addressable. */
+export function uniqueLabels(labels) {
+  const seen = new Map()
+  return labels.map((l) => { const n = (seen.get(l) || 0) + 1; seen.set(l, n); return n > 1 ? `${l} (${n})` : l })
+}
+
+/** Title-topic centroids rebuilt from an assignment (normalised member sums, as at the end of kmeans). */
+export function topicCentroids(docs, assign, k) {
+  const sums = Array.from({ length: k }, () => new Float64Array(DIMS))
+  for (const d of docs) { const c = assign[d.i]; if (c >= 0) for (let j = 0; j < d.idx.length; j++) sums[c][d.idx[j]] += d.val[j] }
+  for (const s of sums) { let norm = 0; for (const v of s) norm += v * v; norm = Math.sqrt(norm); if (norm > 0) for (let j = 0; j < DIMS; j++) s[j] /= norm }
+  return sums
+}
+/** Topic for a video the clustering did not see; -1 like kmeans when it shares almost nothing with any topic. */
+export function nearestTopic(d, centroids, minSimilarity = 0.05) {
+  if (!d.idx.length) return -1
+  let top = minSimilarity, arg = -1
+  for (let c = 0; c < centroids.length; c++) { const s = dot(d, centroids[c]); if (s >= top) { top = s; arg = c } }
+  return arg
+}
+export function lookCentroids(docs, assign, k) {
+  const sums = Array.from({ length: k }, () => new Float64Array(LOOK_DIMS)), counts = new Int32Array(k)
+  for (const d of docs) { const c = assign[d.i]; if (c >= 0 && d.look) { counts[c]++; for (let j = 0; j < LOOK_DIMS; j++) sums[c][j] += d.look[j] } }
+  sums.forEach((s, c) => { if (counts[c]) for (let j = 0; j < LOOK_DIMS; j++) s[j] /= counts[c] })
+  return sums
+}
+export function nearestLook(d, centroids) {
+  if (!d.look) return -1
+  let top = Infinity, arg = -1
+  for (let c = 0; c < centroids.length; c++) { const s = sq(d.look, centroids[c]); if (s < top) { top = s; arg = c } }
+  return arg
+}
+
+/**
+ * For each target doc, the most similar title among docs with placed[i] set (cosine > 0.05), or -1.
+ * Same similarity as neighbours(), but through an inverted index, so thousands of lookups stay fast.
+ */
+export function nearestPlaced(docs, placed, targets) {
+  const postings = new Map()
+  for (const d of docs) if (placed[d.i]) for (let j = 0; j < d.idx.length; j++) {
+    let p = postings.get(d.idx[j]); if (!p) postings.set(d.idx[j], p = []); p.push(d.i, d.val[j])
+  }
+  const score = new Float64Array(docs.length), touched = []
+  return targets.map((d) => {
+    for (let j = 0; j < d.idx.length; j++) {
+      const p = postings.get(d.idx[j]); if (!p) continue
+      for (let k = 0; k < p.length; k += 2) { if (!score[p[k]]) touched.push(p[k]); score[p[k]] += d.val[j] * p[k + 1] }
+    }
+    let best = -1, top = 0.05
+    for (const i of touched) { if (i !== d.i && score[i] > top) { top = score[i]; best = i } score[i] = 0 }
+    touched.length = 0
+    return best
+  })
 }
 
 export function neighbours(docs, target, count = 12) {
@@ -248,8 +379,10 @@ export function matcher(text, groupsOf) {
       case 'year': hit = num ? compare(num[1], Number(d.year), Number(num[2])) : d.year.toLowerCase() === v; break
       case 'dur': hit = num ? compare(num[1], d.seconds, Number(num[2]) * (num[3] === 'm' ? 60 : num[3] === 'h' ? 3600 : 1)) : d.duration.toLowerCase() === v; break
       case 'topic': hit = (groupsOf.topic?.(d) || '').toLowerCase() === v; break
+      case 'look': hit = (groupsOf.look?.(d) || '').toLowerCase() === v; break
       case 'status': hit = (d.verified ? 'verified' : 'unverified') === v; break
-      default: hit = false
+      // Any other key the page provides a category for (meaning, sub, visual, kind, repost, gone, reuse…): exact, case-insensitive.
+      default: hit = groupsOf[p.key] ? String(groupsOf[p.key](d) ?? '').toLowerCase() === v : false
     }
     return p.negate ? !hit : hit
   })

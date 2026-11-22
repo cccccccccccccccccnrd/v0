@@ -39,6 +39,8 @@ export function candidate(node: unknown): Candidate | null {
   if (labels.some((v) => /^(?:premieres\b|premiering\b|scheduled for\b|starts in\b|upcoming\b|live now\b|[\d.,]+[KMB]?\s+watching\b)/i.test(v.trim()))) return null
   const hint = labels.some((v) => /^(?:no|0) views?$/i.test(v.trim())) ? 'zero'
     : labels.some((v) => /\b[1-9][\d,.]*\s*[KMB]?\s+views?\b/i.test(v)) ? 'positive' : 'unknown'
+  const exact = labels.map((v) => /^([1-9]\d{0,2}(?:,\d{3})*) views?$/i.exec(v.trim())).find(Boolean)
+  const views = exact ? Number(exact[1].replaceAll(',', '')) : undefined
   const parts = rows.flatMap((row) => {
     const values = object(row).metadata_parts
     return Array.isArray(values) ? values.map((p) => object(p).text) : []
@@ -49,7 +51,7 @@ export function candidate(node: unknown): Candidate | null {
   const title = (text(n.title) || text(object(n.metadata).title)).trim().slice(0, 1000)
   const author = text(object(n.author).name).trim().slice(0, 200)
   const minAgeDays = minimumAgeDays(text(n.published))
-  return { id, hint, ...(channelId ? { channelId } : {}), ...(title ? { title } : {}), ...(author ? { author } : {}),
+  return { id, hint, ...(views !== undefined ? { views } : {}), ...(channelId ? { channelId } : {}), ...(title ? { title } : {}), ...(author ? { author } : {}),
     ...(minAgeDays !== undefined ? { minAgeDays } : {}),
     ...(typeof seconds === 'number' && Number.isSafeInteger(seconds) && seconds > 0 ? { seconds } : {}) }
 }
@@ -58,7 +60,7 @@ export function parsePlayer(value: unknown, id: string, now = Date.now()): Verif
   const raw = object(value)
   const playability = object(raw.playabilityStatus)
   const reason = string(playability.reason)
-  if (/bot|unusual traffic|confirm.*human/i.test(reason)) throw new CrawlError('YouTube requested a human verification; pausing', 429, now + 30 * 60_000, 'verify')
+  if (/bot|unusual traffic|confirm.*human/i.test(reason)) throw new CrawlError('YouTube requested a human verification; pausing', 429, now + DAY, 'player')
   const details = object(raw.videoDetails)
   // Metadata does not require playable streams; WEB may return UNPLAYABLE without player JS.
   const publicMetadata = playability.status === 'OK' || (playability.status === 'UNPLAYABLE' && details.isCrawlable === true)
@@ -137,12 +139,24 @@ export class PartialSearchError extends Error {
 export interface Provider {
   search(spec: SearchSpec, cycle?: number): Promise<Candidate[]>
   verify(id: string, context?: Candidate): Promise<Verification>
+  player(id: string): Promise<Verification>
   channel(id: string): Promise<Candidate[]>
 }
+// YouTube channel feeds list a channel's newest 15 uploads. A full feed proves that anything published before its
+// oldest entry has left the feed for good and can never be verified by RSS.
+export const FEED_SIZE = 15
+export const FEED_RETRY = 6 * 3_600_000
+export const FEED_RETRIES = 3
+export function feedFloor(entries: Candidate[]) {
+  if (entries.length < FEED_SIZE) return undefined
+  const times = entries.map(e => e.publishedAt).filter((t): t is number => t !== undefined)
+  return times.length === entries.length ? Math.min(...times) : undefined
+}
 export async function createProvider(fetcher: typeof fetch, pages: number, isVerified: (id: string) => boolean = () => false,
-  measure: (name: string) => void = () => {}): Promise<Provider> {
+  measure: (name: string) => void = () => {}, onFeed: (channelId: string, floor: number) => void = () => {}): Promise<Provider> {
   const feeds = new Map<string, { at: number; result: Promise<Candidate[]> }>()
-  async function readFeed(id: string, freshAfter = 0): Promise<Candidate[]> {
+  // strict: a 404/410 is thrown instead of read as an empty feed (verification retries it; channel runs do not).
+  async function readFeed(id: string, freshAfter = 0, strict = false): Promise<Candidate[]> {
     if (!CHANNEL_ID.test(id)) throw new Error('Invalid channel ID')
     let pending = feeds.get(id)
     if (!pending || pending.at <= Date.now() - 60_000 || pending.at < freshAfter) {
@@ -156,13 +170,38 @@ export async function createProvider(fetcher: typeof fetch, pages: number, isVer
       feeds.set(id, pending)
     } else measure('rss_cache_reuse')
     try {
-      return await pending.result
+      const entries = await pending.result
+      const floor = feedFloor(entries)
+      if (floor !== undefined) onFeed(id, floor)
+      return entries
     } catch (error) {
       if (feeds.get(id) === pending) feeds.delete(id)
-      if (error instanceof CrawlError && [404,410].includes(error.status)) return []
+      if (!strict && error instanceof CrawlError && [404,410].includes(error.status)) return []
       if (error instanceof CrawlError) throw error
       throw new CrawlError(error instanceof Error ? error.message : String(error), 0, 0, 'channel')
     }
+  }
+  const catalogues = new Map<string, { at: number; result: Promise<Map<string, Candidate>> }>()
+  // The channel's public /videos page: durations and view hints for its newest uploads, one request per channel.
+  async function fetchCatalogue(id: string): Promise<Map<string, Candidate>> {
+    const response = await fetcher(`https://www.youtube.com/channel/${id}/videos?hl=en&gl=US`)
+    const html = await response.text()
+    const raw = object(pageJSON(html, 'ytInitialData'))
+    const owner = string(object(object(raw.metadata).channelMetadataRenderer).externalId)
+    if (owner !== id) throw new CrawlError('Channel catalogue identity unavailable', 0, 0, 'channel')
+    return new Map(searchNodes(html).map(candidate).filter(card => card && card.seconds && (!card.channelId || card.channelId === id))
+      .map(card => [card!.id, card!]))
+  }
+  async function readCatalogue(id: string): Promise<Map<string, Candidate>> {
+    let pending = catalogues.get(id)
+    if (!pending || pending.at <= Date.now() - 600_000) {
+      pending = { at: Date.now(), result: fetchCatalogue(id) }
+      catalogues.delete(id)
+      if (catalogues.size >= 64) catalogues.delete(catalogues.keys().next().value!)
+      catalogues.set(id, pending)
+    }
+    try { return await pending.result }
+    catch (error) { if (catalogues.get(id) === pending) catalogues.delete(id); throw error }
   }
   async function readSearch(query: string, purpose: 'keyword' | 'metadata'): Promise<Candidate[]> {
     try {
@@ -193,13 +232,21 @@ export async function createProvider(fetcher: typeof fetch, pages: number, isVer
       if (!VIDEO_ID.test(id)) throw new Error('Invalid video ID')
       try {
         let card = context?.id === id ? context : undefined
-        if (!card?.channelId || !card.seconds) card = (await readSearch(id, 'metadata')).find((v) => v.id === id)
+        // A search by ID costs a search slot; only use it when the channel itself is unknown.
+        if (!card?.channelId || !CHANNEL_ID.test(card.channelId)) card = (await readSearch(id, 'metadata')).find((v) => v.id === id)
         if (!card?.channelId || !CHANNEL_ID.test(card.channelId)) return { id, status: 'unknown', reason: 'missing_card' }
         if (card.hint === 'positive') return { id, status: 'nonzero', reason: 'positive_hint' }
         let entry = context?.id === id && context.channelId === card.channelId ? context : undefined
         // Only a fresh count observed after the age cutoff qualifies.
         if (!entry?.feed || entry.publishedAt === undefined || entry.publishedAt + MIN_AGE > entry.feed.checkedAt) {
-          entry = (await readFeed(card.channelId, entry?.publishedAt === undefined ? 0 : entry.publishedAt + MIN_AGE)).find((v) => v.id === id)
+          // Feeds of working channels intermittently return 404 (2026-11-15 analysis): retry later instead of giving up.
+          let entries: Candidate[]
+          try { entries = await readFeed(card.channelId, entry?.publishedAt === undefined ? 0 : entry.publishedAt + MIN_AGE, true) }
+          catch (error) {
+            if (error instanceof CrawlError && [404,410].includes(error.status)) return { id, status: 'unknown', reason: 'feed_unavailable', retryAt: Date.now() + FEED_RETRY }
+            throw error
+          }
+          entry = entries.find((v) => v.id === id)
         }
         if (!entry) return { id, status: 'unknown', reason: 'missing_rss_entry' }
         if (entry.publishedAt! + MIN_AGE > Date.now()) return { id, status: 'young', reason: 'young', retryAt: entry.publishedAt! + MIN_AGE }
@@ -207,9 +254,19 @@ export async function createProvider(fetcher: typeof fetch, pages: number, isVer
         const feed = entry.feed
         if (!feed || feed.rawValue !== '0') return { id, status: 'unknown', reason: 'missing_rss_evidence' }
         if (entry.publishedAt! + MIN_AGE > feed.checkedAt) return { id, status: 'unknown', reason: 'pre_cutoff_observation' }
-        if (!Number.isSafeInteger(card.seconds) || card.seconds! <= 0) return { id, status: 'unknown', reason: 'missing_duration' }
-        const seconds = card.seconds!
-        const timestamp = seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+        let seconds = card.seconds
+        if (!Number.isSafeInteger(seconds) || seconds! <= 0) {
+          // RSS proved zero; the duration comes from the channel page when it lists the video. No search slot is spent:
+          // user decision 2026-11-14, an RSS-proven zero is verified even when no duration can be found.
+          let extra: Candidate | undefined
+          try { extra = (await readCatalogue(card.channelId)).get(id) }
+          catch (error) { if (error instanceof CrawlError && error.scope === 'all' && [403,429].includes(error.status)) throw error }
+          if (extra) measure('duration_from_catalogue')
+          if (extra?.hint === 'positive') return { id, status: 'nonzero', reason: 'positive_hint' }
+          seconds = extra?.seconds
+        }
+        if (seconds === undefined || !Number.isSafeInteger(seconds) || seconds <= 0) { seconds = 0; measure('verified_without_duration') }
+        const timestamp = !seconds ? '' : seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
           : `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
         return { id, status: 'zero', reason: 'verified', record: {
           videoId: id, title: feed.title, description: feed.description, url: `https://www.youtube.com/watch?v=${id}`,
@@ -223,17 +280,24 @@ export async function createProvider(fetcher: typeof fetch, pages: number, isVer
         throw error
       }
     },
+    async player(id) {
+      if (!VIDEO_ID.test(id)) throw new Error('Invalid video ID')
+      try {
+        const response = await fetcher(`https://www.youtube.com/watch?v=${id}&hl=en&gl=US`)
+        const raw = pageJSON(await response.text(), 'ytInitialPlayerResponse')
+        if (!raw) return { id, status: 'unknown', reason: 'missing_player' }
+        return parsePlayer(raw, id)
+      } catch (error) {
+        if (error instanceof CrawlError && [404,410].includes(error.status)) return { id, status: 'unavailable', reason: 'unavailable' }
+        if (error instanceof CrawlError) throw error
+        throw new CrawlError(error instanceof Error ? error.message : String(error), 0, 0, 'player')
+      }
+    },
     async channel(id) {
       const entries = await readFeed(id)
       if (!entries.some(entry => entry.hint === 'zero' && entry.publishedAt !== undefined && entry.publishedAt + MIN_AGE <= Date.now() && !isVerified(entry.id))) return entries
       try {
-        const response = await fetcher(`https://www.youtube.com/channel/${id}/videos?hl=en&gl=US`)
-        const html = await response.text()
-        const raw = object(pageJSON(html, 'ytInitialData'))
-        const owner = string(object(object(raw.metadata).channelMetadataRenderer).externalId)
-        if (owner !== id) throw new CrawlError('Channel catalogue identity unavailable', 0, 0, 'channel')
-        const cards = new Map(searchNodes(html).map(candidate).filter(card => card && card.seconds && (!card.channelId || card.channelId === id))
-          .map(card => [card!.id, card!]))
+        const cards = await readCatalogue(id)
         const enriched = entries.map(entry => {
           const card = cards.get(entry.id)
           return card ? { ...entry, seconds: card.seconds, hint: card.hint === 'positive' ? 'positive' as const : entry.hint } : entry

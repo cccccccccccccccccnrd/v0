@@ -2,10 +2,3 @@ node_modules/
 data/
 .env
 *.log
-.DS_Store
-# Commercial font (Aston Script Bold, TRF, all rights reserved): deployed from a licensed local copy, never published.
-public/v2-script.ttf
-# Server runbook (hosts, backup paths) stays private.
-deploy/PRODUCTION.md
-# Detailed server runbook stays private.
-RUNBOOK.md

@@ -17,14 +17,15 @@ test('cold searches explore every age band, weighted toward older uploads, inste
     bands[band] = (bands[band] || 0) + 1
     store.release(task, NOW + 86_400_000)
   }
-  // User decision 2026-11-09: about 50% archive, 35% older, 15% recent.
-  assert.deepEqual(bands, { archive: 15, older: 11, recent: 4 })
+  // User decision 2026-11-20: about 50% archive, 45% older, 5% recent.
+  assert.deepEqual(bands, { archive: 15, older: 14, recent: 1 })
 })
 
 test('due searches with real verified yield outrank cold terms without shortening cooldowns', (t) => {
   const store = memory(t)
   store.seed({ term: 'cold', window: 'archive' }, NOW)
-  store.seed({ term: 'productive', window: 'older' }, NOW)
+  // Within the turn's window, past yield decides (the window itself outranks yield since 2026-11-18).
+  store.seed({ term: 'productive', window: 'archive' }, NOW)
   store.db.exec("UPDATE tasks SET found=3 WHERE json_extract(payload,'$.term')='productive'")
   const productive = store.claim(NOW)!
   assert.equal(JSON.parse(productive.payload).term, 'productive')

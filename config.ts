@@ -22,18 +22,26 @@ export function config(env = process.env) {
     workers: number('WORKERS', 4, 1, 32),
     rps: number('REQUESTS_PER_SECOND', 1, 0.05, 20, false),
     searchRequestInterval: number('SEARCH_REQUEST_INTERVAL_SECONDS', 60, 1, 3600, false) * 1000,
+    // Off by default: a paced watch-page count check for matured candidates that RSS can no longer prove.
+    playerFallback: env.PLAYER_FALLBACK === '1',
+    playerRequestInterval: number('PLAYER_REQUEST_INTERVAL_SECONDS', 120, 10, 86400, false) * 1000,
     timeout: number('REQUEST_TIMEOUT_MS', 20_000, 1000, 120_000),
     pages: number('SEARCH_PAGES', 2, 1, 5),
     maxPending: number('MAX_PENDING', 20_000, 100, 1_000_000),
     maxSearches: number('MAX_SEARCHES', 10_000, 10, 50_000),
     maxChannels: number('MAX_CHANNELS', 2000, 0, 50_000),
     searchInterval: number('SEARCH_INTERVAL_HOURS', 6, 0.5, 168, false) * 3_600_000,
-    seenTtl: number('SEEN_TTL_DAYS', 30, 1, 365) * DAY
+    seenTtl: number('SEEN_TTL_DAYS', 30, 1, 365) * DAY,
+    // User decision 2026-11-20: thumbnail fingerprints for the "Thumbnail look" grouping; 0 turns the job off.
+    thumbInterval: number('THUMB_INTERVAL_MS', 500, 0, 3_600_000),
+    ffmpeg: env.FFMPEG || 'ffmpeg',
+    // User request 2026-11-21: bake the dashboard snapshot (clusters + slim rows) every hour at :00 (slots are multiples since the epoch); 0 turns it off.
+    snapshotInterval: number('SNAPSHOT_INTERVAL_MS', 3_600_000, 0, 86_400_000)
   }
 }
 export type Config = ReturnType<typeof config>
 export type Kind = 'search' | 'channel' | 'verify'
-export type Source = Kind | 'catalogue'
+export type Source = Kind | 'catalogue' | 'player'
 export interface SearchSpec { term: string; window: 'recent' | 'older' | 'archive' }
 export function searchRange(window: SearchSpec['window'], now = Date.now()): [number, number, number] {
   return window === 'recent' ? [7,37,1] : window === 'older' ? [37,187,7]
@@ -50,6 +58,8 @@ export function publicationTime(date: string) {
 export interface Candidate {
   id: string; hint: 'zero' | 'positive' | 'unknown'; publishedAt?: number
   channelId?: string; seconds?: number; title?: string; author?: string
+  /** Exact small view count from a search card ("7 views"); abbreviated counts like 1.2K are left out. */
+  views?: number
   /** Conservative lower bound on upload age from a relative search label. */
   minAgeDays?: number
   feed?: { title: string; description: string; author: string; uploadDate: string; rawValue: '0'; checkedAt: number }
@@ -57,7 +67,7 @@ export interface Candidate {
 export interface Verification {
   id: string
   status: 'zero' | 'nonzero' | 'unknown' | 'young' | 'unavailable'
-  reason?: 'verified' | 'young' | 'missing_card' | 'positive_hint' | 'positive_count' | 'missing_rss_entry' | 'missing_rss_evidence' | 'pre_cutoff_observation' | 'missing_duration' | 'unavailable'
+  reason?: 'verified' | 'young' | 'missing_card' | 'positive_hint' | 'positive_count' | 'missing_rss_entry' | 'missing_rss_evidence' | 'pre_cutoff_observation' | 'missing_duration' | 'unavailable' | 'missing_player' | 'feed_unavailable'
   retryAt?: number
   record?: Video
 }

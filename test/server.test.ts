@@ -32,19 +32,22 @@ test('HTTP uses bounded keyset pagination and exposes health, status, and CSP-pr
   assert.ok(!JSON.stringify(first).includes('private-consent-value'))
   assert.ok(!(await (await fetch(base+'/api/status')).text()).includes('private-consent-value'))
   // Aston Script (commercial) is deployed from a licensed local copy and is absent from the public repository.
-  const script = existsSync(new URL('../public/v2-script.ttf', import.meta.url))
-  if (!script) assert.equal((await fetch(base+'/v2-script.ttf')).status, 404)
-  for(const path of ['/','/app.js','/style.css','/site/','/v1','/site.js','/site.css','/v2','/v2.js','/v2-core.js','/v2.css','/v2-sharp.woff',...(script ? ['/v2-script.ttf'] : []),'/v2-garamond.woff2','/api/status','/healthz']){
+  const script = existsSync(new URL('../public/script.ttf', import.meta.url))
+  if (!script) assert.equal((await fetch(base+'/script.ttf')).status, 404)
+  for(const path of ['/','/app.js','/core.js','/style.css','/status','/status.js','/status.css','/sharp.woff',...(script ? ['/script.ttf'] : []),'/garamond.woff2','/api/status','/healthz']){
     const response=await fetch(base+path)
     assert.equal(response.status,200,path)
     assert.ok(response.headers.get('content-security-policy')?.includes("script-src 'self'"))
     // only cnrd.computer may embed yt0 (its project preview panel)
     assert.ok(response.headers.get('content-security-policy')?.includes('frame-ancestors https://cnrd.computer https://www.cnrd.computer;'))
   }
-  const originalSite = await (await fetch(base+'/site/')).text()
-  assert.ok(originalSite.includes('𝒜𝓇𝓇𝒶𝓃𝑔𝒾𝓃𝑔'))
-  assert.ok(originalSite.includes('/site.js'))
-  assert.ok(!originalSite.includes('/app.js'))
+  const dashboard = await (await fetch(base+'/')).text()
+  assert.ok(dashboard.includes('src="/app.js"'))
+  assert.ok((await (await fetch(base+'/status')).text()).includes('src="/status.js"'))
+  // Old links to /v2 redirect to the dashboard; the removed V1 pages are gone.
+  const moved = await fetch(base+'/v2?x=1', { redirect: 'manual' })
+  assert.equal(moved.status, 301); assert.equal(moved.headers.get('location'), '/?x=1')
+  for (const path of ['/v1', '/site/', '/site.js']) assert.equal((await fetch(base+path)).status, 404, path)
   for(const query of ['limit=0','limit=501','limit=','limit=1&limit=2','cursor=bad','limit=1.1']){
     assert.equal((await fetch(base+'/api/videos?'+query)).status,400,query)
   }
@@ -70,7 +73,7 @@ test('read-only UI renders hostile legacy metadata as text and uses constructed 
   const context=vm.createContext({document,console,setInterval(){},AbortSignal,
     fetch:async(url:string)=>({ok:true,json:async()=>url.startsWith('/api/videos')
       ?{videos:[],cursor:null}:{videos:[],today:[{name:'http_channel_404',value:3}],queue:[],recentErrors:[],pauseUntil:0,heartbeat:Date.now()}})})
-  vm.runInContext(readFileSync(new URL('../public/app.js',import.meta.url),'utf8'),context)
+  vm.runInContext(readFileSync(new URL('../public/status.js',import.meta.url),'utf8'),context)
   await new Promise((r)=>setImmediate(r))
   const evil={videoId:id(),title:'<img src=x onerror=alert(1)>',author:{name:'<script>bad()</script>'},
     url:'javascript:alert(1)',verification:'legacy',uploadDate:'unknown'}
@@ -118,4 +121,30 @@ test('real entry point starts on an isolated database and shuts down gracefully 
   assert.equal(after.summary().today.find((m)=>m.name==='requests'),undefined)
   assert.ok(after.taskCount('search')>0)
   after.close()
+})
+
+test('/api/map serves the offline analysis file, gzipped when accepted, and 404 before one exists', async (t) => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { gzipSync } = await import('node:zlib')
+  const http = await import('node:http')
+  const dir = mkdtempSync(join(tmpdir(), 'yt0-map-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'map.json.gz')
+  const { server } = createApp(memory(t), file)
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  t.after(async () => { await new Promise<void>((r) => server.close(() => r())) })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  const base = 'http://127.0.0.1:' + address.port
+  assert.equal((await fetch(base + '/api/map')).status, 404)
+  writeFileSync(file, gzipSync(JSON.stringify({ version: 1 })))
+  assert.deepEqual(await (await fetch(base + '/api/map')).json(), { version: 1 })
+  // Without gzip in Accept-Encoding the server decompresses.
+  const plain = await new Promise<string>((resolve) => http.get(base + '/api/map', { headers: { 'accept-encoding': 'identity' } }, (res) => {
+    assert.equal(res.headers['content-encoding'], undefined); let s = ''; res.on('data', (c) => s += c); res.on('end', () => resolve(s))
+  }))
+  assert.deepEqual(JSON.parse(plain), { version: 1 })
 })

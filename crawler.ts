@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { DAY, MIN_AGE, log, type Config, type SearchSpec, type Candidate } from './config.ts'
 import type { Store, Task, VerifyPayload } from './store.ts'
 import { CrawlError, retryDelay, requestContext } from './network.ts'
-import { PartialSearchError, type Provider } from './provider.ts'
+import { PartialSearchError, FEED_RETRIES, type Provider } from './provider.ts'
 
 export async function seedFile(store: Store, path: string | URL, now = Date.now()) {
   const terms = (await readFile(path, 'utf8')).split(/\r?\n/).map((v) => v.trim()).filter((v) => v && !v.startsWith('#'))
@@ -28,17 +28,23 @@ function nextSearch(task: Task, cfg: Config, added: number) {
   return Math.min(7 * DAY, productive ? cfg.searchInterval / 2
     : cfg.searchInterval * (added ? 1 : 2 ** Math.min(task.empty_runs + 1, 5)))
 }
+export const LOW_VIEWS = 10
 export function enqueueCandidates(store: Store, items: Candidate[], source: string, queryKey: string, now = Date.now(), cycle = 0) {
   let added = 0
   let unknown = 0
   const offset = items.length ? cycle % items.length : 0
   const sorted = [...items.slice(offset), ...items.slice(0, offset)].sort((a,b) => Number(b.hint === 'zero') - Number(a.hint === 'zero'))
-  // Feed capacity is reserved for explicit-zero hints and verified discoveries.
+  // User decision 2026-11-20: channels of zero-view and low-view cards (at most LOW_VIEWS) are all admitted; the
+  // earlier limit of 3 per page is lifted. Small channels are where zero-view uploads come from.
   const channels = new Set<string>()
   for (const item of sorted) {
-    if (item.hint === 'zero' && item.channelId && channels.size < 3 && !channels.has(item.channelId)) {
+    const small = item.hint === 'zero' || (item.views !== undefined && item.views <= LOW_VIEWS)
+    if (small && item.channelId && !channels.has(item.channelId)) {
       channels.add(item.channelId)
-      if (store.channel(item.channelId, now, false, queryKey)) store.metric('channels_queued', 1, now)
+      if (store.channel(item.channelId, now, false, queryKey)) {
+        store.metric('channels_queued', 1, now)
+        if (item.hint !== 'zero') store.metric('channels_queued_low_views', 1, now)
+      }
     }
   }
   for (const item of sorted) if (item.hint === 'zero') store.saveHint(item, source, now)
@@ -55,6 +61,7 @@ export function enqueueCandidates(store: Store, items: Candidate[], source: stri
   store.metric('candidates_queued', added, now)
   return added
 }
+const PLAYER_REASONS = new Set(['missing_rss_entry', 'missing_card', 'missing_rss_evidence'])
 export async function executeTask(task: Task, store: Store, provider: Provider, cfg: Config, signal: AbortSignal) {
   const payload = JSON.parse(task.payload)
   signal.throwIfAborted()
@@ -63,11 +70,39 @@ export async function executeTask(task: Task, store: Store, provider: Provider, 
     if (store.isVerified(job.id)) { store.measure('verification_already_archived', job.queryKey); store.finish(task); return }
     // A matured zero hint is archived (unverified) before the check, whatever the check finds.
     if (job.candidate?.id === job.id) store.saveHint(job.candidate, job.source)
-    const result = await requestContext.run({ sourceKey: job.queryKey }, () => provider.verify(job.id, job.candidate))
+    // Already past the channel's feed window: RSS can never prove it, so no request is spent.
+    if (!job.player && job.candidate?.id === job.id && store.outOfFeed(job.candidate)) {
+      store.metric('checks_unknown')
+      store.measure('verification_out_of_feed', job.queryKey)
+      store.remember(job.id, 'unknown')
+      store.finish(task)
+      return
+    }
+    let result = job.player ? undefined : await requestContext.run({ sourceKey: job.queryKey }, () => provider.verify(job.id, job.candidate))
     signal.throwIfAborted()
     if (!store.owns(task)) return
+    // RSS could not prove the count (entry gone or card missing): ask the watch page, slowly.
+    if (cfg.playerFallback && (!result || (result.status === 'unknown' && PLAYER_REASONS.has(result.reason || '')))) {
+      if (result) store.measure('verification_' + result.reason, job.queryKey)
+      const blocked = store.playerSlot(cfg.playerRequestInterval)
+      if (blocked) {
+        store.deferToPlayer(task, blocked + Math.round(Math.random() * 30 * cfg.playerRequestInterval))
+        store.metric('player_deferred')
+        return
+      }
+      result = await requestContext.run({ sourceKey: job.queryKey }, () => provider.player(job.id))
+      signal.throwIfAborted()
+      if (!store.owns(task)) return
+      store.metric('player_checks_' + result.status)
+      if (result.status === 'zero') store.metric('player_verified')
+    } else if (!result) result = await requestContext.run({ sourceKey: job.queryKey }, () => provider.verify(job.id, job.candidate))
     store.metric('checks_' + result.status)
     store.measure('verification_' + (result.reason || result.status), job.queryKey)
+    if (result.status === 'unknown' && result.reason === 'feed_unavailable' && result.retryAt && task.runs < FEED_RETRIES) {
+      store.metric('verify_feed_retry')
+      store.release(task, result.retryAt + Math.round(Math.random() * 3_600_000))
+      return
+    }
     if (result.status === 'young' && result.retryAt) {
       store.release(task, result.retryAt + 60_000)
       return
@@ -78,7 +113,8 @@ export async function executeTask(task: Task, store: Store, provider: Provider, 
       if (saved) {
         log('zero_found', { id: job.id, title: result.record.title, query: job.source })
         store.channel(result.record.author.id, Date.now(), true, job.queryKey)
-        for (const term of titleTerms(result.record.title)) store.seed({ term, window: 'older' }, Date.now(), job.queryKey)
+        // User decision 2026-11-18: title words also search the archive window.
+        for (const term of titleTerms(result.record.title)) for (const window of ['archive', 'older'] as const) store.seed({ term, window }, Date.now(), job.queryKey)
       }
     }
     store.remember(job.id, result.status)

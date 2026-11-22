@@ -1,35 +1,65 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>yt0 — the overlooked archive</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
-</head>
-<body>
-  <header>
-    <div><h1>yt0 <span>V2</span></h1><p>The overlooked archive.</p></div>
-    <p id="connection" role="status">Connecting…</p>
-  </header>
-  <main>
-    <section aria-labelledby="status-title" class="panel">
-      <h2 id="status-title">Continuous discovery</h2>
-      <p id="status" aria-live="polite">Loading crawler status…</p>
-      <p id="queue"></p>
-      <details><summary>Recent crawler errors</summary><pre id="errors">None</pre></details>
-    </section>
-    <section aria-labelledby="archive-title">
-      <div class="toolbar">
-        <h2 id="archive-title">Zero at discovery</h2>
-        <label>Filter loaded videos <input id="filter" type="search" placeholder="Title or channel"></label>
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>v0 engine 4 arranging data into lists</title>
+    <meta name="description" content="software that facilitates the downloading of video content that has not been viewed yet. exhibited as a video installation that displays a montage of the dataset on an inaccessible screen." />
+    <meta property="og:title" content="v0 engine 4 arranging data into lists" />
+    <meta property="og:description" content="software that facilitates the downloading of video content that has not been viewed yet. exhibited as a video installation that displays a montage of the dataset on an inaccessible screen." />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body class="loading">
+    <div id="stage">
+      <canvas id="space" aria-label="Interactive map of archived zero-view videos. Use the search panel for a text list." role="img"></canvas>
+      <div id="left">
+      <h1 id="brand"><a href="/" title="Reset to the default view · Logo font: Web437 Sharp PC3K Alt-2x by VileR (int10h.org), CC BY-SA 4.0">v0</a></h1>
+      <div id="controls" aria-label="Space controls">
+        <div class="row" role="group" aria-label="Layout">
+          <button type="button" id="mode-scatter" aria-pressed="true">Axes</button>
+          <button type="button" id="mode-galaxy" aria-pressed="false">Clusters</button>
+          <button type="button" id="mode-meaning" aria-pressed="false" title="Map by title meaning, computed offline">Meaning</button>
+          <button type="button" id="mode-visual" aria-pressed="false" title="Map by thumbnail content, computed offline">Visual</button>
+        </div>
+        <label class="galaxy-only">Group by <select id="group"></select></label>
+        <label class="scatter-only">X <select id="x"></select></label>
+        <label class="scatter-only">Y <select id="y"></select></label>
+        <label>Title topics <select id="k"></select></label>
       </div>
-      <p class="note">Observed at exactly zero views, at least seven days after upload. This is a historical archive, not a live count. Opening a video may give it a view. Legacy imports are labeled separately until verified.</p>
-      <div id="videos" class="grid" aria-live="polite"></div>
-      <p id="message" role="status"></p>
-      <button id="more" type="button">Load more</button>
-    </section>
-  </main>
-  <footer>No media is downloaded or played by the crawler.</footer>
-</body>
+      <div id="actions" role="toolbar" aria-label="Actions">
+        <button type="button" id="fit" title="Fit all points (F or double-click)">Fit</button>
+        <button type="button" id="random" title="Open a random matching video (R)">Random</button>
+        <button type="button" id="copy" title="Copy a link to this exact view">Copy link</button>
+        <button type="button" id="reset" title="Back to the default view">Reset</button>
+      </div>
+      <div id="artwork" class="cnrd">
+        <div class="up">
+          <a class="proj" href="https://cnrd.computer/#arranging-data-into-lists" target="_blank" rel="noopener">
+            <h2>Arranging Data Into Lists</h2>
+            <p>
+              Software that facilitates the downloading of video content that has not been viewed yet. Exhibited as a
+              video installation that displays a montage of the dataset on an inaccessible screen.
+            </p>
+          </a>
+        </div>
+      </div>
+      </div>
+      <div id="tooltip" role="tooltip" hidden></div>
+      <p id="loading" role="status" aria-live="polite">Loading archive…</p>
+    </div>
+    <aside id="panel">
+      <label class="search"><span>Search</span>
+        <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="words, channel:x, lang:cyrillic, year:<2015, dur:>10m, -status:unverified" />
+      </label>
+      <p id="summary" role="status" aria-live="polite"></p>
+      <p id="area" hidden></p>
+      <section id="detail" hidden></section>
+      <section>
+        <h2>Matches</h2>
+        <ol id="results"></ol>
+      </section>
+      <section id="facets"></section>
+    </aside>
+  </body>
 </html>

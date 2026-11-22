@@ -1,5 +1,7 @@
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { gunzipSync, gzip } from 'node:zlib'
+import { promisify } from 'node:util'
 import { VIDEO_ID } from './config.ts'
 import type { Store } from './store.ts'
 
@@ -10,30 +12,36 @@ export function decodeCursor(value: string | null) {
   if (!Number.isSafeInteger(cursor.time) || cursor.time < 0 || typeof cursor.id !== 'string' || !VIDEO_ID.test(cursor.id)) throw new Error('Invalid cursor')
   return { time: cursor.time as number, id: cursor.id as string }
 }
-export function createApp(store: Store) {
+// User decision 2026-11-20: the analysis map (positions, clusters, names, similar videos) is computed offline on the user's Mac
+// and copied to DATA_DIR/analysis/map.json.gz; this server only serves the file.
+export function createApp(store: Store, mapFile = '', snapshotFile = '') {
   let stopping = false
+  // Pre-gzipped files written by other jobs: the offline map and, since 2026-11-21, the hourly dashboard snapshot (bake.ts).
+  const gzFiles = new Map([['/api/map', { file: mapFile, missing: 'No analysis map yet' }], ['/api/snapshot', { file: snapshotFile, missing: 'No snapshot yet' }]])
+  const gzCache = new Map<string, { mtime: number; gz: Buffer }>()
+  // User decision 2026-11-21: one version only. The dashboard is the root page; the crawler status page moved to /status.
   const assets = new Map([
     ['/', ['index.html', 'text/html; charset=utf-8']],
     ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+    ['/core.js', ['core.js', 'text/javascript; charset=utf-8']],
     ['/style.css', ['style.css', 'text/css; charset=utf-8']],
-    ['/site/', ['site.html', 'text/html; charset=utf-8']],
-    ['/v1', ['site.html', 'text/html; charset=utf-8']],
-    ['/site.js', ['site.js', 'text/javascript; charset=utf-8']],
-    ['/site.css', ['site.css', 'text/css; charset=utf-8']],
-    ['/v2', ['v2.html', 'text/html; charset=utf-8']],
-    ['/v2.js', ['v2.js', 'text/javascript; charset=utf-8']],
-    ['/v2-core.js', ['v2-core.js', 'text/javascript; charset=utf-8']],
-    ['/v2.css', ['v2.css', 'text/css; charset=utf-8']],
+    ['/status', ['status.html', 'text/html; charset=utf-8']],
+    ['/status.js', ['status.js', 'text/javascript; charset=utf-8']],
+    ['/status.css', ['status.css', 'text/css; charset=utf-8']],
     // Logo font: Web437 Sharp PC3K Alt-2x by VileR (int10h.org), CC BY-SA 4.0.
-    ['/v2-sharp.woff', ['v2-sharp.woff', 'font/woff']],
+    ['/sharp.woff', ['sharp.woff', 'font/woff']],
     // Artwork card fonts from cnrd.computer: Aston Script Bold (TRF) and EB Garamond (SIL OFL).
-    ['/v2-script.ttf', ['v2-script.ttf', 'font/ttf']],
-    ['/v2-garamond.woff2', ['v2-garamond.woff2', 'font/woff2']]
+    ['/script.ttf', ['script.ttf', 'font/ttf']],
+    ['/garamond.woff2', ['garamond.woff2', 'font/woff2']]
   ])
   const server = createServer(async (req, res) => {
-    function send(status: number, data: unknown) {
-      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-      res.end(req.method === 'HEAD' ? undefined : JSON.stringify(data))
+    const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))
+    async function send(status: number, data: unknown, compress = false) {
+      const body = JSON.stringify(data)
+      // User request 2026-11-21: archive pages are ~0.5 MB of JSON; gzip cuts them about fourfold.
+      const gz = compress && acceptsGzip && body.length > 1024 ? await promisify(gzip)(body) : undefined
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...(compress ? { vary: 'accept-encoding' } : {}), ...(gz ? { 'content-encoding': 'gzip' } : {}) })
+      res.end(req.method === 'HEAD' ? undefined : gz || body)
     }
     res.setHeader('x-content-type-options', 'nosniff')
     res.setHeader('referrer-policy', 'no-referrer')
@@ -43,6 +51,8 @@ export function createApp(store: Store) {
     try {
       const url = new URL(req.url || '/', 'http://localhost')
       const asset = assets.get(url.pathname)
+      // Old shared links to the dashboard keep working.
+      if (url.pathname === '/v2') { res.writeHead(301, { location: '/' + url.search }); res.end(); return }
       if (asset) {
         let contents: Buffer
         // The licensed script font is not in the public repository; a missing optional asset is a 404, not a 500.
@@ -65,7 +75,20 @@ export function createApp(store: Store) {
         const videos = rows.slice(0, limit)
         const last = videos.at(-1)
         const cursor = rows.length > limit && last ? Buffer.from(JSON.stringify({ time: last.foundAt, id: last.videoId })).toString('base64url') : null
-        send(200, { videos, cursor })
+        await send(200, { videos, cursor }, true)
+      } else if (gzFiles.has(url.pathname)) {
+        const { file, missing } = gzFiles.get(url.pathname)!
+        let info
+        try { info = file ? await stat(file) : undefined } catch { info = undefined }
+        if (!info) { send(404, { error: missing }); return }
+        let cached = gzCache.get(url.pathname)
+        if (cached?.mtime !== info.mtimeMs) gzCache.set(url.pathname, cached = { mtime: info.mtimeMs, gz: await readFile(file) })
+        // The file only changes when re-baked, so repeat visits revalidate with an ETag instead of downloading again.
+        const etag = '"' + Math.round(info.mtimeMs).toString(36) + '-' + cached.gz.length.toString(36) + (acceptsGzip ? '-gz' : '') + '"'
+        const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache', vary: 'accept-encoding', etag }
+        if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return }
+        res.writeHead(200, { ...headers, ...(acceptsGzip ? { 'content-encoding': 'gzip' } : {}) })
+        res.end(req.method === 'HEAD' ? undefined : acceptsGzip ? cached.gz : gunzipSync(cached.gz))
       } else if (url.pathname === '/api/status') {
         send(200, { ...store.summary(), stopping })
       } else if (url.pathname === '/healthz') {

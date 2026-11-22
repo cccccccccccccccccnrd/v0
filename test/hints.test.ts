@@ -63,13 +63,13 @@ test('a matured zero candidate is archived as a hint when its check runs, even i
   const store = memory(t)
   const card = { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 60, publishedAt: Date.now() - 8 * DAY, title: 'Matured' }
   store.enqueue({ id: id(1), source: 'q', queryKey: '', candidate: card }, Date.now(), Date.now(), 'zero')
-  const provider = { search: async () => [], channel: async () => [],
+  const provider = { search: async () => [], channel: async () => [], player: async () => ({ id: id(1), status: 'unknown' as const }),
     verify: async () => ({ id: id(1), status: 'unknown' as const, reason: 'missing_rss_entry' as const }) }
   await executeTask(store.claim()!, store, provider, cfg, new AbortController().signal)
   assert.deepEqual(store.page(10).map((v) => [v.videoId, v.verification]), [[id(1), 'hint']])
 })
 
-test('search claims favour older upload windows about 50/35/15 without starving recent', (t) => {
+test('search claims split about 50/45/5 between archive, older and recent', (t) => {
   const store = memory(t)
   for (let n = 0; n < 40; n++) for (const window of ['recent', 'older', 'archive'] as const) store.seed({ term: 't' + n, window }, NOW)
   const counts: Record<string, number> = { recent: 0, older: 0, archive: 0 }
@@ -79,5 +79,5 @@ test('search claims favour older upload windows about 50/35/15 without starving 
     counts[JSON.parse(task.payload).window]++
     store.release(task, NOW + 365 * DAY)
   }
-  assert.deepEqual(counts, { archive: 20, older: 14, recent: 6 })
+  assert.deepEqual(counts, { archive: 20, older: 18, recent: 2 })
 })

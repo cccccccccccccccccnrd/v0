@@ -77,7 +77,7 @@ test('already-paused requests defer without manufacturing failures or overwritin
       store.pause(Date.now() + 600_000, 'verification redirect', 'search')
       throw new CrawlError('Source is cooling down', 0, Number(store.meta('pause_search_until')), 'search')
     },
-    async channel() { return [] }, async verify(id) { return { id, status: 'unknown' } }
+    async channel() { return [] }, async verify(id) { return { id, status: 'unknown' } }, async player(id) { return { id, status: 'unknown' } }
   }
   const running = runWorkers(store, provider, { ...cfg, workers: 2 }, controller.signal)
   try { await until(() => calls === 1 && Number(store.db.prepare('SELECT sum(locked_until) AS n FROM tasks').get()!.n) === 0) }

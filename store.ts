@@ -8,7 +8,7 @@ export interface Task {
   id: number; key: string; kind: Kind; payload: string; token: string
   failures: number; runs: number; found: number; last_found: number; empty_runs: number
 }
-export interface VerifyPayload { id: string; source: string; queryKey: string; candidate?: Candidate }
+export interface VerifyPayload { id: string; source: string; queryKey: string; candidate?: Candidate; player?: boolean }
 const LEASE = 120_000
 
 export async function backupDatabase(source: DatabaseSync, destination: string) {
@@ -24,7 +24,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
   try {
     const version = Number(db.prepare('PRAGMA user_version').get()!.user_version)
     const columns = db.prepare("PRAGMA table_info(videos)").all()
-    if (version > 2 || (columns.length && !columns.some((c) => c.name === 'found_at'))) throw new Error('Incompatible database: use a separate V2 data directory and the importer')
+    if (version > 2 || (columns.length && !columns.some((c) => c.name === 'found_at'))) throw new Error('Incompatible database: use a separate data directory')
   db.exec(`
     PRAGMA journal_mode=WAL;
     PRAGMA synchronous=FULL;
@@ -64,6 +64,9 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       PRIMARY KEY(day,key,name)
     ) STRICT;
     CREATE TABLE IF NOT EXISTS counters(name TEXT PRIMARY KEY,n INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS feed_floors(channel_id TEXT PRIMARY KEY, floor INTEGER NOT NULL, checked_at INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS thumbs(video_id TEXT PRIMARY KEY, look TEXT NOT NULL, checked_at INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS retired_searches(key TEXT PRIMARY KEY, term TEXT NOT NULL, window TEXT NOT NULL, runs INTEGER NOT NULL, retired_at INTEGER NOT NULL) STRICT;
     INSERT OR IGNORE INTO counters SELECT 'task:'||kind,count(*) FROM tasks GROUP BY kind;
     INSERT OR IGNORE INTO counters SELECT 'video:'||verification,count(*) FROM videos GROUP BY verification;
     CREATE TRIGGER IF NOT EXISTS task_added AFTER INSERT ON tasks BEGIN
@@ -88,15 +91,27 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     ON CONFLICT(day,name) DO UPDATE SET value=value+excluded.value`)
   const insertTask = db.prepare(`INSERT INTO tasks(key,kind,payload,priority,due_at) VALUES(?,?,?,?,?)
     ON CONFLICT(key) DO NOTHING`)
+  // User decision 2026-11-18: archive searches retired by the cleanup come back once (2,183 in production).
+  if (!db.prepare("SELECT 1 FROM meta WHERE key='archive_searches_restored'").get()) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const now = Date.now()
+      for (const row of db.prepare("SELECT key,term,window FROM retired_searches WHERE window='archive'").all())
+        insertTask.run(String(row.key), 'search', JSON.stringify({ term: row.term, window: row.window }), 10, now)
+      db.exec("DELETE FROM retired_searches WHERE window='archive'")
+      db.exec("INSERT INTO meta VALUES('archive_searches_restored','2026-11-18')")
+      db.exec('COMMIT')
+    } catch (error) { db.exec('ROLLBACK'); throw error }
+  }
   const lookup = db.prepare('SELECT status,checked_at FROM seen WHERE video_id=?')
   const archived = db.prepare('SELECT verification FROM videos WHERE video_id=?')
   const remember = db.prepare(`INSERT INTO seen VALUES(?,?,?)
     ON CONFLICT(video_id) DO UPDATE SET checked_at=excluded.checked_at,status=excluded.status`)
+  // A known channel is enough to verify through RSS without a search slot; durations come from the channel page.
   const cachedCard = `json_extract(payload,'$.candidate.id')=json_extract(payload,'$.id')
     AND json_type(payload,'$.candidate.channelId')='text'
     AND length(json_extract(payload,'$.candidate.channelId'))=24
-    AND substr(json_extract(payload,'$.candidate.channelId'),1,2)='UC'
-    AND json_type(payload,'$.candidate.seconds')='integer' AND json_extract(payload,'$.candidate.seconds')>0`
+    AND substr(json_extract(payload,'$.candidate.channelId'),1,2)='UC'`
   const cachedFeed = `json_type(payload,'$.candidate.feed')='object'
     AND json_type(payload,'$.candidate.publishedAt')='integer'
     AND json_type(payload,'$.candidate.feed.checkedAt')='integer'
@@ -113,12 +128,14 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     SELECT id FROM tasks WHERE due_at<=? AND locked_until<=?
     AND ${taskPause} <= ?
     ORDER BY priority + CASE WHEN kind='search' AND found>0 THEN 2 ELSE 0 END
-      + CASE WHEN kind='search' AND json_extract(payload,'$.window')=? THEN 1 ELSE 0 END DESC,due_at,id LIMIT 1) RETURNING *`)
-  // User decision 2026-11-09: focus search on older uploads, ~50% archive (187+ days), 35% older, 15% recent.
-  const WINDOW_TURNS = 'AOAOARAOAOAOARAOAOAR'
+      + CASE WHEN kind='search' AND json_extract(payload,'$.window')=? THEN 3 ELSE 0 END DESC,due_at,id LIMIT 1) RETURNING *`)
+  // The turn's window (+3) outranks past yield (+2), so the 2026-11-18 window split holds; yield orders searches within a window.
+  // User decision 2026-11-20 (was 80/15/5 since 2026-11-18): 50% archive (187+ days), 45% older, 5% recent.
+  // 2026-11-19 data: archive runs queued 0.2 candidates each, older runs 1.7; archive tripled verified old finds.
+  const WINDOW_TURNS = 'AOAOAOAOAOAOAOAOAOAR'
   const WINDOW_NAMES: Record<string, SearchSpec['window']> = { A: 'archive', O: 'older', R: 'recent' }
   const decode = (rows: Record<string, unknown>[]) => rows.map((r) => ({
-    ...JSON.parse(r.record as string), verification: r.verification, foundAt: r.found_at
+    ...JSON.parse(r.record as string), verification: r.verification, foundAt: r.found_at, ...(r.look ? { look: r.look } : {})
   }))
   function metric(name: string, value = 1, now = Date.now()) {
     metricStmt.run(new Date(now).toISOString().slice(0, 10), name, value)
@@ -156,6 +173,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     if (taskCount('search') >= limits.maxSearches) return false
     const normalized = { term: spec.term.trim(), window: spec.window }
     const key = 'search:' + createHash('sha256').update(normalized.term.toLowerCase() + '\0' + normalized.window).digest('hex')
+    if (db.prepare('SELECT 1 FROM retired_searches WHERE key=?').get(key)) return false
     const added = insertTask.run(key, 'search', JSON.stringify(normalized), 10, now).changes === 1
     if (added) observeSource(key, parent, now)
     return added
@@ -172,6 +190,43 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       observeSource('channel:' + id, parent, now)
     }
     return added
+  }
+  // The oldest upload in a full channel feed; earlier uploads have left the feed for good.
+  function setFeedFloor(channelId: string, floor: number, now = Date.now()) {
+    if (!CHANNEL_ID.test(channelId) || !Number.isSafeInteger(floor)) return
+    db.prepare(`INSERT INTO feed_floors VALUES(?,?,?) ON CONFLICT(channel_id) DO UPDATE
+      SET floor=max(floor,excluded.floor),checked_at=excluded.checked_at`).run(channelId, floor, now)
+  }
+  // True only when the candidate was certainly published before its channel's feed floor: an exact publish time,
+  // or the latest time a search card's "N days ago" allows.
+  function outOfFeed(card: Candidate | undefined, now = Date.now()) {
+    if (!card?.channelId || !CHANNEL_ID.test(card.channelId)) return false
+    const latest = card.publishedAt ?? (card.minAgeDays !== undefined ? now - card.minAgeDays * DAY : undefined)
+    if (latest === undefined) return false
+    const row = db.prepare('SELECT floor FROM feed_floors WHERE channel_id=?').get(card.channelId)
+    return !!row && latest < Number(row.floor)
+  }
+  // User decision 2026-11-14: searches that have run repeatedly without ever leading to a verified find are removed
+  // for good (word-list and title-derived alike), so their slots go to new title-derived terms.
+  // 2026-11-15 data: 8,867 of 10,000 searches were overdue, so dead searches cost real search time.
+  // A run is "empty" when it queued no new candidate; two empty runs in a row with no find ever is dead.
+  function retireSearches(now = Date.now(), minRuns = 2, minEmptyRuns = 2) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      // User decision 2026-11-18: archive searches are never retired; each run covers another 30-day slice since 2005.
+      const rows = db.prepare(`SELECT id,key,payload,runs FROM tasks WHERE kind='search' AND runs>=? AND empty_runs>=?
+        AND json_extract(payload,'$.window')!='archive'
+        AND found=0 AND locked_until<=? AND NOT EXISTS(SELECT 1 FROM source_metrics
+          WHERE source_metrics.key=tasks.key AND name IN ('root_verified_zero','verified_zero')) LIMIT 2000`).all(minRuns, minEmptyRuns, now)
+      for (const row of rows) {
+        const spec = JSON.parse(String(row.payload)) as SearchSpec
+        db.prepare('INSERT OR IGNORE INTO retired_searches VALUES(?,?,?,?,?)').run(String(row.key), spec.term, spec.window, Number(row.runs), now)
+        db.prepare('DELETE FROM tasks WHERE id=?').run(row.id)
+      }
+      db.exec('COMMIT')
+      if (rows.length) metric('searches_retired', rows.length, now)
+      return rows.length
+    } catch (error) { db.exec('ROLLBACK'); throw error }
   }
   function retireChannels(now = Date.now()) {
     db.exec('BEGIN IMMEDIATE')
@@ -194,6 +249,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     // Hint rows stay eligible for background verification and upgrade.
     if (!VIDEO_ID.test(payload.id) || (stored && stored !== 'hint')) return false
     const card = payload.candidate
+    if (outOfFeed(card, now)) { metric('skipped_out_of_feed', 1, now); return false }
     const published = card?.feed ? publicationTime(card.feed.uploadDate) : undefined
     const complete = card?.id === payload.id && card.hint === 'zero' && CHANNEL_ID.test(card.channelId || '') &&
       typeof card.seconds === 'number' && Number.isSafeInteger(card.seconds) && card.seconds > 0 &&
@@ -222,7 +278,8 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     if (!VIDEO_ID.test(video.videoId) || video.views !== 0 || !(player || feed) ||
       ![0,'0'].includes(proof.rawValue) || !Number.isSafeInteger(proof.checkedAt) ||
       published === undefined || published + MIN_AGE > proof.checkedAt ||
-      (feed && (!Number.isSafeInteger(video.seconds) || video.seconds <= 0 || !CHANNEL_ID.test(video.author.id)))) {
+      // User decision 2026-11-14: an RSS-proven zero may have no known duration (seconds 0).
+      (feed && (!Number.isSafeInteger(video.seconds) || video.seconds < 0 || !CHANNEL_ID.test(video.author.id)))) {
       throw new Error('Refusing a video without explicit zero-view evidence')
     }
     const result = db.prepare(`INSERT INTO videos VALUES(?,?,?,?,'verified')
@@ -278,7 +335,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
   }
   return {
     saveHint, backfillHints,
-    db, metric, measure, observeSource, meta, setMeta, seed, channel, retireChannels, enqueue, save, taskCount,
+    db, metric, measure, observeSource, meta, setMeta, seed, channel, retireChannels, retireSearches, setFeedFloor, outOfFeed, enqueue, save, taskCount,
     isVerified: (id: string) => archived.get(id)?.verification === 'verified',
     remember(id: string, status: string, now = Date.now()) { remember.run(id, now, status) },
     pause(until: number, reason: string, scope: Source | 'all' = 'all') {
@@ -305,6 +362,17 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     renew(task: Task, now = Date.now()) {
       return db.prepare('UPDATE tasks SET locked_until=? WHERE id=? AND token=?').run(now + LEASE, task.id, task.token).changes === 1
     },
+    // One watch-page request per interval; returns 0 and books the slot, or the earliest allowed time.
+    playerSlot(interval: number, now = Date.now()) {
+      const blocked = Math.max(Number(meta('pause_until') || 0), Number(meta('pause_player_until') || 0), Number(meta('player_next_request_at') || 0))
+      if (blocked > now) return blocked
+      setMeta('player_next_request_at', String(now + interval))
+      return 0
+    },
+    deferToPlayer(task: Task, due: number) {
+      db.prepare("UPDATE tasks SET payload=json_set(payload,'$.player',json('true')),due_at=?,locked_until=0,token='' WHERE id=? AND token=?")
+        .run(due, task.id, task.token)
+    },
     owns(task: Task) { return !!db.prepare('SELECT 1 FROM tasks WHERE id=? AND token=?').get(task.id, task.token) },
     finish(task: Task) { db.prepare('DELETE FROM tasks WHERE id=? AND token=?').run(task.id, task.token) },
     defer(task: Task, due: number) {
@@ -321,9 +389,9 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     },
     page(limit: number, after?: { time: number; id: string }) {
       const rows = after
-        ? db.prepare(`SELECT * FROM videos WHERE (found_at,video_id)<(?,?)
+        ? db.prepare(`SELECT videos.*,thumbs.look FROM videos LEFT JOIN thumbs USING(video_id) WHERE (found_at,video_id)<(?,?)
             ORDER BY found_at DESC,video_id DESC LIMIT ?`).all(after.time, after.id, limit)
-        : db.prepare('SELECT * FROM videos ORDER BY found_at DESC,video_id DESC LIMIT ?').all(limit)
+        : db.prepare('SELECT videos.*,thumbs.look FROM videos LEFT JOIN thumbs USING(video_id) ORDER BY found_at DESC,video_id DESC LIMIT ?').all(limit)
       return decode(rows)
     },
     summary(now = Date.now()) {
@@ -350,7 +418,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
         recentErrors: db.prepare(`SELECT kind,failures,last_error AS error FROM tasks
           WHERE last_error IS NOT NULL ORDER BY due_at DESC LIMIT 5`).all(),
         pauseUntil: Number(meta('pause_until') || 0), pauseReason: meta('pause_reason') || null,
-        sourcePauses: (['search', 'channel', 'verify', 'catalogue'] as const).map((kind) => ({ kind,
+        sourcePauses: (['search', 'channel', 'verify', 'catalogue', 'player'] as const).map((kind) => ({ kind,
           until: Number(meta('pause_' + kind + '_until') || 0), reason: meta('pause_' + kind + '_reason') || null
         })).filter((p) => p.until > now),
         searchNextRequestAt: Number(meta('search_next_request_at') || 0),
@@ -370,65 +438,20 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       db.prepare(`DELETE FROM seen WHERE checked_at<? AND NOT EXISTS(
         SELECT 1 FROM tasks WHERE key='verify:'||seen.video_id)`).run(now - ttl)
       retireChannels(now)
+      retireSearches(now)
       db.prepare('DELETE FROM retired_channels WHERE retired_at<?').run(now - 30 * DAY)
+      db.prepare('DELETE FROM feed_floors WHERE checked_at<?').run(now - 30 * DAY)
       db.prepare('DELETE FROM metrics WHERE day<?').run(new Date(now - 90 * DAY).toISOString().slice(0,10))
       db.prepare('DELETE FROM source_metrics WHERE day<?').run(new Date(now - 90 * DAY).toISOString().slice(0,10))
       db.exec('PRAGMA wal_checkpoint(PASSIVE)')
     },
-    // User decision 2026-11-09: finds of the 2024–25 Arranging Data Into Lists crawler are shown as unverified hints
-    // with their saved metadata and original found time; no YouTube requests are made and nothing is queued.
-    importOld(records: Iterable<unknown>, now = Date.now()) {
-      let added = 0, skipped = 0
-      const insert = db.prepare("INSERT INTO videos VALUES(?,?,?,?,'hint') ON CONFLICT(video_id) DO NOTHING")
-      db.exec('BEGIN IMMEDIATE')
-      try {
-        for (const value of records) {
-          const v = (value && typeof value === 'object' ? value : {}) as Record<string, any>
-          const seconds = Number.isSafeInteger(v.seconds) && v.seconds >= 0 ? v.seconds : 0
-          if (typeof v.videoId !== 'string' || !VIDEO_ID.test(v.videoId) || typeof v.title !== 'string' ||
-            !Number.isSafeInteger(v.foundAt) || v.foundAt <= 0 || v.foundAt > now ||
-            (v.uploadDate && publicationTime(v.uploadDate) === undefined)) { skipped++; continue }
-          const author = v.author && typeof v.author === 'object' ? v.author : {}
-          const record: Video = { videoId: v.videoId, title: v.title.slice(0, 1000), description: String(v.description || '').slice(0, 5000),
-            url: `https://www.youtube.com/watch?v=${v.videoId}`, seconds,
-            timestamp: seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-              : `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
-            views: 0, uploadDate: v.uploadDate || '', thumbnail: `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
-            author: { name: String(author.name || '').trim(), url: String(author.url || ''), id: CHANNEL_ID.test(author.id) ? author.id : '' },
-            meta: { q: String(v.q || 'arranging data into lists'), timestamp: v.foundAt },
-            evidence: { source: 'arranging/v1', field: 'v1-search-card', rawValue: 0, checkedAt: v.foundAt } }
-          if (insert.run(v.videoId, v.foundAt, record.meta.q, JSON.stringify(record)).changes) added++
-          else skipped++
-        }
-        db.exec('COMMIT')
-      } catch (error) { db.exec('ROLLBACK'); throw error }
-      metric('imported_old_finds', added, now)
-      return { added, skipped }
+    // Newest finds first; a row with an empty look means the thumbnail was missing or unreadable.
+    thumbsPending(limit = 50) {
+      return (db.prepare(`SELECT video_id FROM videos WHERE NOT EXISTS(SELECT 1 FROM thumbs WHERE thumbs.video_id=videos.video_id)
+        ORDER BY found_at DESC,video_id DESC LIMIT ?`).all(limit) as { video_id: string }[]).map((r) => r.video_id)
     },
-    importLegacy(records: Iterable<unknown>, now = Date.now()) {
-      db.exec('BEGIN IMMEDIATE')
-      try {
-        let added = 0
-        for (const value of records) {
-          if (!value || typeof value !== 'object') throw new Error('Invalid legacy record')
-          const v = value as Record<string, unknown>
-          if (typeof v.videoId !== 'string' || !VIDEO_ID.test(v.videoId) || typeof v.title !== 'string' ||
-            !(v.views === null || (typeof v.views === 'number' && Number.isFinite(v.views) && v.views >= 0))) throw new Error('Expected a valid legacy video record')
-          const found = (v.meta as { timestamp?: unknown } | undefined)?.timestamp
-          const time = typeof found === 'number' && Number.isSafeInteger(found) && found >= 0 ? Math.min(found, now) : now
-          const source = (v.meta as { q?: unknown } | undefined)?.q
-          const q = typeof source === 'string' ? source : 'legacy import'
-          const changes = db.prepare(`INSERT INTO videos VALUES(?,?,?,?,'legacy')
-            ON CONFLICT(video_id) DO NOTHING`).run(v.videoId, time, q, JSON.stringify(v)).changes
-          if (changes) added++
-          // Legacy counts have no V2 evidence; verification is queued separately.
-          if (taskCount('verify') < limits.maxPending && archived.get(v.videoId)?.verification !== 'verified') {
-            insertTask.run('verify:' + v.videoId, 'verify', JSON.stringify({ id: v.videoId, source: q, queryKey: '' }), 60, now)
-          }
-        }
-        db.exec('COMMIT')
-        return added
-      } catch (error) { db.exec('ROLLBACK'); throw error }
+    saveLook(id: string, look: string, now = Date.now()) {
+      db.prepare('INSERT INTO thumbs VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET look=excluded.look,checked_at=excluded.checked_at').run(id, look, now)
     },
     backup: (destination: string) => backupDatabase(db, destination),
     close() { db.close() }

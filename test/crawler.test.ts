@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { executeTask, enqueueCandidates, runWorkers, titleTerms, seedFile } from '../crawler.ts'
+import { executeTask, enqueueCandidates, runWorkers, titleTerms, seedFile, LOW_VIEWS } from '../crawler.ts'
 import { CrawlError } from '../network.ts'
 import { createProvider, type Provider } from '../provider.ts'
 import { cfg, id, raw, video, memory, NOW, until, channel, feedXml, searchResponse, htmlJSON } from './helpers.ts'
 
 const empty:Provider={
-  async search(){return []},async verify(id){return {id,status:'unknown'}},async channel(){return []}
+  async search(){return []},async verify(id){return {id,status:'unknown'}},async player(id){return {id,status:'unknown'}},async channel(){return []}
 }
 
 test('bulk seed failures roll back every inserted job and counter', async (t) => {
@@ -278,4 +278,24 @@ test('title exploration remains bounded and includes non-English tokens', () => 
   assert.ok(titleTerms('日本語の音楽 練習動画').length>0)
   assert.equal(titleTerms('the and for').length,0)
   assert.ok(titleTerms('one two three four five').length<=2)
+})
+
+test('channels of zero-view and low-view cards are all admitted; abbreviated or larger counts are not', async (t) => {
+  const { candidate } = await import('../provider.ts')
+  assert.equal(candidate({video_id:id(),view_count:'7 views'})!.views,7)
+  assert.equal(candidate({video_id:id(),view_count:'1 view'})!.views,1)
+  assert.equal(candidate({video_id:id(),view_count:'1,234 views'})!.views,1234)
+  assert.equal(candidate({video_id:id(),view_count:'1.2K views'})!.views,undefined)
+  assert.equal(candidate({video_id:id(),view_count:'No views'})!.views,undefined)
+  const store=memory(t)
+  const ch=(n:number)=>'UC'+String(n).padStart(22,'b')
+  const items=[
+    ...Array.from({length:5},(_,n)=>({id:id(n+1),hint:'zero' as const,channelId:ch(n)})),
+    {id:id(10),hint:'positive' as const,views:LOW_VIEWS,channelId:ch(10)},
+    {id:id(11),hint:'positive' as const,views:LOW_VIEWS+1,channelId:ch(11)},
+    {id:id(12),hint:'positive' as const,channelId:ch(12)},
+  ]
+  enqueueCandidates(store,items,'q','',NOW)
+  assert.equal(store.taskCount('channel'),6,'five zero-view channels (no limit of 3) and one low-view channel')
+  assert.equal(store.db.prepare("SELECT value FROM metrics WHERE name='channels_queued_low_views'").get()!.value,1)
 })

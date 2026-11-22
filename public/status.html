@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>yt0 — the overlooked archive</title>
+  <link rel="stylesheet" href="/status.css">
+  <script src="/status.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><h1>yt0</h1><p>The overlooked archive.</p></div>
+    <p id="connection" role="status">Connecting…</p>
+  </header>
+  <main>
+    <section aria-labelledby="status-title" class="panel">
+      <h2 id="status-title">Continuous discovery</h2>
+      <p id="status" aria-live="polite">Loading crawler status…</p>
+      <p id="queue"></p>
+      <details><summary>Recent crawler errors</summary><pre id="errors">None</pre></details>
+    </section>
+    <section aria-labelledby="archive-title">
+      <div class="toolbar">
+        <h2 id="archive-title">Zero at discovery</h2>
+        <label>Filter loaded videos <input id="filter" type="search" placeholder="Title or channel"></label>
+      </div>
+      <p class="note">Observed at exactly zero views, at least seven days after upload. This is a historical archive, not a live count. Opening a video may give it a view. Legacy imports are labeled separately until verified.</p>
+      <div id="videos" class="grid" aria-live="polite"></div>
+      <p id="message" role="status"></p>
+      <button id="more" type="button">Load more</button>
+    </section>
+  </main>
+  <footer>No media is downloaded or played by the crawler.</footer>
+</body>
+</html>

@@ -46,14 +46,19 @@ function networkErrorDetails(value: unknown, depth = 0): Record<string, unknown>
   return details
 }
 
+export const FEED_OUTAGE_CHANNELS = 8
+export const FEED_OUTAGE_PAUSE = 30 * 60_000
 export function controlledFetch(store: Store, cfg: Pick<Config, 'rps' | 'timeout'> & Partial<Pick<Config, 'searchRequestInterval'>>, signal: AbortSignal, transport: typeof fetch = fetch) {
   let next = 0
+  // 2026-11-16: every night (~00–08 UTC) nearly all channel feeds return 404 for this host, then recover.
+  // After FEED_OUTAGE_CHANNELS different channels 404 in a row with no 200, RSS pauses and probes again later.
+  const feed404 = new Set<string>()
   return async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
     let url = new URL(input instanceof Request ? input.url : String(input))
     url.hash = ''
     const origin = url.origin
     const path = url.pathname
-    const scope = path.startsWith('/channel/') ? 'catalogue' : path.includes('/feeds/') ? 'channel' : (path.endsWith('/search') || path === '/results') ? 'search' : (path.endsWith('/player') || path === '/watch') ? 'verify' : undefined
+    const scope = path.startsWith('/channel/') ? 'catalogue' : path.includes('/feeds/') ? 'channel' : (path.endsWith('/search') || path === '/results') ? 'search' : (path.endsWith('/player') || path === '/watch') ? 'player' : undefined
     const requestSignal = input instanceof Request ? input.signal : undefined
     const operationSignal = AbortSignal.any([signal, ...(init?.signal ? [init.signal] : []), ...(requestSignal ? [requestSignal] : [])])
     const visited = new Set([url.href])
@@ -77,7 +82,7 @@ export function controlledFetch(store: Store, cfg: Pick<Config, 'rps' | 'timeout
       store.metric('requests')
       const context = requestContext.getStore()
       const purpose = scope === 'search' ? context?.purpose || 'search_unclassified'
-        : scope === 'channel' ? 'rss' : scope === 'catalogue' ? 'catalogue' : 'other'
+        : scope === 'channel' ? 'rss' : scope === 'catalogue' ? 'catalogue' : scope === 'player' ? 'player' : 'other'
       store.measure('requests_' + purpose, context?.sourceKey)
       let response: Response
       const started = performance.now()
@@ -105,7 +110,17 @@ export function controlledFetch(store: Store, cfg: Pick<Config, 'rps' | 'timeout
       }
       store.metric(`http_${scope || 'other'}_${response.status}`)
       store.measure(`response_${purpose}_${response.status}`, context?.sourceKey)
-      if (scope === 'channel') store.measure(`feed_response_${response.status}`, 'channel:' + url.searchParams.get('channel_id'))
+      if (scope === 'channel') {
+        store.measure(`feed_response_${response.status}`, 'channel:' + url.searchParams.get('channel_id'))
+        if (response.status === 404) feed404.add(url.searchParams.get('channel_id') || '')
+        else if (response.ok) feed404.clear()
+        if (feed404.size >= FEED_OUTAGE_CHANNELS) {
+          feed404.clear()
+          store.pause(Date.now() + FEED_OUTAGE_PAUSE, 'RSS feeds returning 404 for many channels', 'channel')
+          store.metric('feed_outage_pause')
+          log('feed_outage_pause', { minutes: FEED_OUTAGE_PAUSE / 60_000 })
+        }
+      }
       if ([301,302,303,307,308].includes(response.status) && response.headers.has('location')) {
         const location = response.headers.get('location')!
         const retry = retryAfter(response.headers.get('retry-after'))
@@ -127,7 +142,8 @@ export function controlledFetch(store: Store, cfg: Pick<Config, 'rps' | 'timeout
           throw new CrawlError('Redirect Retry-After', response.status, retry, scope)
         }
         if (['consent.youtube.com','accounts.google.com'].includes(destination.hostname) || /^\/(?:sorry|consent|signin)(?:\/|$)/.test(destination.pathname)) {
-          const until = Date.now() + 30 * 60_000
+          // The optional watch-page check stops for a day; other sources keep their 30-minute cooldown.
+          const until = Date.now() + (scope === 'player' ? 86_400_000 : 30 * 60_000)
           store.pause(until, 'YouTube consent or verification redirect', scope || 'all')
           store.metric('throttled')
           throw new CrawlError('YouTube consent or verification redirect', 429, until, scope)
@@ -149,10 +165,11 @@ export function controlledFetch(store: Store, cfg: Pick<Config, 'rps' | 'timeout
       if (!response.ok) {
         const code = response.status
         const retry = retryAfter(response.headers.get('retry-after'))
-        const until = Math.max(retry,
+        const until = Math.max(retry, scope === 'player' && [403,429].includes(code) ? Date.now() + 86_400_000 :
           Date.now() + (code === 403 ? 30 * 60_000 : code === 429 ? 5 * 60_000 : code >= 500 ? 30_000 : 0))
         await response.body?.cancel()
-        const failureScope = code >= 500 ? scope || 'all' : 'all'
+        // Watch-page refusals only stop the optional fallback, never search or RSS.
+        const failureScope = code >= 500 || scope === 'player' ? scope || 'all' : 'all'
         // Ordinary 5xx retries belong to the job; explicit Retry-After also cools its source.
         if (code === 403 || code === 429 || (code >= 500 && retry > Date.now())) {
           store.pause(until, `HTTP ${code}`, failureScope)

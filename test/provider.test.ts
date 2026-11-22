@@ -199,14 +199,16 @@ test('feed observations reuse matching metadata but never age an early zero into
   assert.equal((await provider.verify(id(), { ...card, hint: 'positive' })).status, 'nonzero')
 })
 
-test('RSS rejects missing duration, mismatched IDs, live cards, and contradictory positive hints', async () => {
+test('RSS rejects mismatched IDs, live cards, and contradictory positive hints; a missing duration is verified blank', async () => {
   for(const mode of ['duration','live','id','positive','channel']){
     const value=searchResponse(mode==='id'?2:1,mode==='positive'?'1 view':'No views',mode==='duration'?'':'1:00')
     const card=value.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].videoRenderer
     if(mode==='live')card.thumbnailOverlays[0].thumbnailOverlayTimeStatusRenderer.style='LIVE'
     if(mode==='channel')card.ownerText.runs[0].navigationEndpoint.browseEndpoint.browseId='UC'+'b'.repeat(22)
     const provider=await createProvider(async(input)=>new Response(String(input).includes('/feeds/')?feedXml():htmlJSON('ytInitialData',value)),1)
-    assert.notEqual((await provider.verify(id())).status,'zero',mode)
+    const result=await provider.verify(id())
+    if(mode==='duration'){ assert.equal(result.status,'zero'); assert.equal(result.record!.seconds,0); assert.equal(result.record!.timestamp,''); continue }
+    assert.notEqual(result.status,'zero',mode)
   }
 })
 

@@ -39,7 +39,7 @@ export function video(n = 1, now = NOW) {
   return v
 }
 export function temp(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(),'yt0-v2-'))
+  const dir = mkdtempSync(join(tmpdir(),'yt0-'))
   t.after(() => rmSync(dir,{recursive:true,force:true}))
   return dir
 }
