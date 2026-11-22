@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parsePlayer, candidate, parseFeed, searchQuery, createProvider } from '../provider.ts'
-import { retryAfter, retryDelay, controlledFetch, CrawlError } from '../network.ts'
-import { DAY, MIN_AGE } from '../config.ts'
+import { parsePlayer, candidate, parseFeed, searchQuery, createProvider } from '../src/provider.ts'
+import { retryAfter, retryDelay, controlledFetch, CrawlError } from '../src/network.ts'
+import { DAY, MIN_AGE } from '../src/config.ts'
 import { raw,id,NOW,memory,feedXml,searchResponse,channel,htmlJSON } from './helpers.ts'
 
 test('only literal raw zero qualifies; missing, coerced, rounded, and malformed values never do', () => {

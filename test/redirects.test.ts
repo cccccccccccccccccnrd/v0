@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { controlledFetch, CrawlError } from '../network.ts'
+import { controlledFetch, CrawlError } from '../src/network.ts'
 import { memory } from './helpers.ts'
 
 const cfg = { rps: 20, timeout: 1000 }

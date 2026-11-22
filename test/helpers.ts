@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
-import { config } from '../config.ts'
-import { openStore } from '../store.ts'
-import { parsePlayer } from '../provider.ts'
+import { config } from '../src/config.ts'
+import { openStore } from '../src/store.ts'
+import { parsePlayer } from '../src/provider.ts'
 
 export const NOW = Date.parse('2026-10-25T12:00:00Z')
 export const cfg = config({})

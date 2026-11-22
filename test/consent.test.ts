@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { controlledFetch, CrawlError } from '../network.ts'
+import { controlledFetch, CrawlError } from '../src/network.ts'
 import { memory } from './helpers.ts'
 
 const preference = () => ({ name: 'SOCS', value: 'private-consent-test', domain: '.youtube.com',

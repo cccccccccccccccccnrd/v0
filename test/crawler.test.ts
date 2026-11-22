@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { executeTask, enqueueCandidates, runWorkers, titleTerms, seedFile, LOW_VIEWS } from '../crawler.ts'
-import { CrawlError } from '../network.ts'
-import { createProvider, type Provider } from '../provider.ts'
+import { executeTask, enqueueCandidates, runWorkers, titleTerms, seedFile, LOW_VIEWS } from '../src/crawler.ts'
+import { CrawlError } from '../src/network.ts'
+import { createProvider, type Provider } from '../src/provider.ts'
 import { cfg, id, raw, video, memory, NOW, until, channel, feedXml, searchResponse, htmlJSON } from './helpers.ts'
 
 const empty:Provider={
@@ -16,13 +16,13 @@ test('bulk seed failures roll back every inserted job and counter', async (t) =>
   store.db.exec(`CREATE TEMP TRIGGER fail_seed BEFORE INSERT ON tasks
     WHEN NEW.kind='search' AND json_extract(NEW.payload,'$.term')='VID'
     BEGIN SELECT RAISE(ABORT,'injected seed failure'); END;`)
-  await assert.rejects(seedFile(store, new URL('../seeds.txt', import.meta.url), NOW), /injected seed failure/)
+  await assert.rejects(seedFile(store, new URL('../src/seeds.txt', import.meta.url), NOW), /injected seed failure/)
   assert.equal(store.taskCount('search'), 0)
   assert.equal(store.db.prepare('SELECT count(*) AS n FROM tasks').get()!.n, 0)
 })
 
 test('the complete bundled word list fits all three age bands and reseeds idempotently', async (t) => {
-  const path = new URL('../seeds.txt', import.meta.url)
+  const path = new URL('../src/seeds.txt', import.meta.url)
   const terms = new Set((await readFile(path, 'utf8')).split(/\r?\n/).map(v => v.trim().toLowerCase()).filter(v => v && !v.startsWith('#')))
   assert.equal(terms.size, 2341)
   for (const word of ['img', 'willie', '010', 'bad']) assert.ok(terms.has(word), word)
@@ -281,7 +281,7 @@ test('title exploration remains bounded and includes non-English tokens', () => 
 })
 
 test('channels of zero-view and low-view cards are all admitted; abbreviated or larger counts are not', async (t) => {
-  const { candidate } = await import('../provider.ts')
+  const { candidate } = await import('../src/provider.ts')
   assert.equal(candidate({video_id:id(),view_count:'7 views'})!.views,7)
   assert.equal(candidate({video_id:id(),view_count:'1 view'})!.views,1)
   assert.equal(candidate({video_id:id(),view_count:'1,234 views'})!.views,1234)

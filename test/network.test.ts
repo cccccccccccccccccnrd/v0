@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { controlledFetch } from '../network.ts'
+import { controlledFetch } from '../src/network.ts'
 import { memory } from './helpers.ts'
 
 test('transport diagnostics retain native error codes without altering the thrown error or cooldowns', async (t) => {

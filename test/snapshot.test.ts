@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import http from 'node:http'
-import { bakeSnapshot, bakeInWorker, startBaking, slim, TOPIC_KS } from '../bake.ts'
-import { createApp } from '../server.ts'
+import { bakeSnapshot, bakeInWorker, startBaking, slim, TOPIC_KS } from '../src/bake.ts'
+import { createApp } from '../src/server.ts'
 import { memory, video, NOW } from './helpers.ts'
 // @ts-ignore plain browser module without type declarations
-import * as coreModule from '../public/core.js'
+import * as coreModule from '../src/public/core.js'
 const core: any = coreModule
 
 const WORDS = ['rain', 'ocean', 'guitar', 'lesson', 'minecraft', 'build', 'recipe', 'cake', 'news', 'city', 'train', 'night']

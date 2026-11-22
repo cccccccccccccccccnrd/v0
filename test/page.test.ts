@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { pageJSON, searchNodes } from '../page.ts'
-import { candidate } from '../provider.ts'
+import { pageJSON, searchNodes } from '../src/page.ts'
+import { candidate } from '../src/provider.ts'
 import { searchResponse, id } from './helpers.ts'
 
 test('public page JSON is read without evaluation, including braces and escapes in strings', () => {

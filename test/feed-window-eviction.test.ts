@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DAY } from '../config.ts'
-import { createProvider, feedFloor, FEED_SIZE } from '../provider.ts'
-import { executeTask } from '../crawler.ts'
+import { DAY } from '../src/config.ts'
+import { createProvider, feedFloor, FEED_SIZE } from '../src/provider.ts'
+import { executeTask } from '../src/crawler.ts'
 import { join } from 'node:path'
-import { openStore } from '../store.ts'
+import { openStore } from '../src/store.ts'
 import { cfg, channel, id, memory, temp } from './helpers.ts'
 
 function fullFeed(oldest: string) {
@@ -69,7 +69,7 @@ test('long-unproductive searches are retired for good; productive ones stay', (t
 })
 
 test('a feed 404 during verification is retried later; channel runs still read it as empty', async (t) => {
-  const { CrawlError } = await import('../network.ts')
+  const { CrawlError } = await import('../src/network.ts')
   const fetcher = async () => { throw new CrawlError('YouTube HTTP 404', 404, 0, 'channel') }
   const provider = await createProvider(fetcher as never, 1)
   const result = await provider.verify(id(1), { id: id(1), hint: 'zero', channelId: channel })

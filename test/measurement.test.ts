@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { join } from 'node:path'
-import { DAY, MIN_AGE } from '../config.ts'
-import { controlledFetch, requestContext, CrawlError } from '../network.ts'
-import { createProvider, parseFeed } from '../provider.ts'
-import { executeTask } from '../crawler.ts'
-import { openStore } from '../store.ts'
+import { DAY, MIN_AGE } from '../src/config.ts'
+import { controlledFetch, requestContext, CrawlError } from '../src/network.ts'
+import { createProvider, parseFeed } from '../src/provider.ts'
+import { executeTask } from '../src/crawler.ts'
+import { openStore } from '../src/store.ts'
 import { cfg, memory, temp, NOW, channel, id, video, feedXml, htmlJSON, searchResponse } from './helpers.ts'
 
 const network = { rps: 20, timeout: 1000 }

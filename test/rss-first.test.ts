@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DAY } from '../config.ts'
-import { createProvider } from '../provider.ts'
+import { DAY } from '../src/config.ts'
+import { createProvider } from '../src/provider.ts'
 import { channel, feedXml, htmlJSON, id, memory, searchResponse } from './helpers.ts'
 
 const catalogue = (views = 'No views') => htmlJSON('ytInitialData', { ...searchResponse(1, views), metadata: { channelMetadataRenderer: { externalId: channel } } })

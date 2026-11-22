@@ -319,22 +319,8 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     if (added) metric('hint_zero_saved', 1, now)
     return added
   }
-  // One-time backfill of zero-looking candidates already in the database (user decision 2026-11-09).
-  // One-time backfill of old-enough zero candidates already queued (user decision 2026-11-09).
-  function backfillHints(now = Date.now()) {
-    db.exec('BEGIN IMMEDIATE')
-    try {
-      let added = 0
-      for (const row of db.prepare("SELECT payload FROM tasks WHERE kind='verify'").all()) {
-        const job = JSON.parse(String(row.payload)) as VerifyPayload
-        if (job.candidate?.id === job.id && saveHint(job.candidate, job.source, now)) added++
-      }
-      db.exec('COMMIT')
-      return { added }
-    } catch (error) { db.exec('ROLLBACK'); throw error }
-  }
   return {
-    saveHint, backfillHints,
+    saveHint,
     db, metric, measure, observeSource, meta, setMeta, seed, channel, retireChannels, retireSearches, setFeedFloor, outOfFeed, enqueue, save, taskCount,
     isVerified: (id: string) => archived.get(id)?.verification === 'verified',
     remember(id: string, status: string, now = Date.now()) { remember.run(id, now, status) },

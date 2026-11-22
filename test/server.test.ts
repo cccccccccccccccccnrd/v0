@@ -7,8 +7,8 @@ import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { createServer } from 'node:net'
-import { createApp, decodeCursor } from '../server.ts'
-import { openStore } from '../store.ts'
+import { createApp, decodeCursor } from '../src/server.ts'
+import { openStore } from '../src/store.ts'
 import { cfg, video, id, memory, temp, NOW, until } from './helpers.ts'
 
 test('HTTP uses bounded keyset pagination and exposes health, status, and CSP-protected assets', async (t) => {
@@ -32,7 +32,7 @@ test('HTTP uses bounded keyset pagination and exposes health, status, and CSP-pr
   assert.ok(!JSON.stringify(first).includes('private-consent-value'))
   assert.ok(!(await (await fetch(base+'/api/status')).text()).includes('private-consent-value'))
   // Aston Script (commercial) is deployed from a licensed local copy and is absent from the public repository.
-  const script = existsSync(new URL('../public/script.ttf', import.meta.url))
+  const script = existsSync(new URL('../src/public/script.ttf', import.meta.url))
   if (!script) assert.equal((await fetch(base+'/script.ttf')).status, 404)
   for(const path of ['/','/app.js','/core.js','/style.css','/status','/status.js','/status.css','/sharp.woff',...(script ? ['/script.ttf'] : []),'/garamond.woff2','/api/status','/healthz']){
     const response=await fetch(base+path)
@@ -73,7 +73,7 @@ test('read-only UI renders hostile legacy metadata as text and uses constructed 
   const context=vm.createContext({document,console,setInterval(){},AbortSignal,
     fetch:async(url:string)=>({ok:true,json:async()=>url.startsWith('/api/videos')
       ?{videos:[],cursor:null}:{videos:[],today:[{name:'http_channel_404',value:3}],queue:[],recentErrors:[],pauseUntil:0,heartbeat:Date.now()}})})
-  vm.runInContext(readFileSync(new URL('../public/status.js',import.meta.url),'utf8'),context)
+  vm.runInContext(readFileSync(new URL('../src/public/status.js',import.meta.url),'utf8'),context)
   await new Promise((r)=>setImmediate(r))
   const evil={videoId:id(),title:'<img src=x onerror=alert(1)>',author:{name:'<script>bad()</script>'},
     url:'javascript:alert(1)',verification:'legacy',uploadDate:'unknown'}
@@ -95,7 +95,7 @@ test('real entry point starts on an isolated database and shuts down gracefully 
   assert.ok(address&&typeof address!=='string')
   const port=address.port
   await new Promise<void>((r)=>portServer.close(()=>r()))
-  const child=spawn(process.execPath,[new URL('../main.ts',import.meta.url).pathname],{
+  const child=spawn(process.execPath,[new URL('../src/main.ts',import.meta.url).pathname],{
     env:{...process.env,DATA_DIR:dir,HOST:'127.0.0.1',PORT:String(port)},stdio:['ignore','pipe','pipe']
   })
   let output=''

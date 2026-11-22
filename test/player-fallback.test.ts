@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DAY } from '../config.ts'
-import { executeTask } from '../crawler.ts'
-import { controlledFetch, CrawlError } from '../network.ts'
-import { createProvider } from '../provider.ts'
+import { DAY } from '../src/config.ts'
+import { executeTask } from '../src/crawler.ts'
+import { controlledFetch, CrawlError } from '../src/network.ts'
+import { createProvider } from '../src/provider.ts'
 import { cfg, channel, htmlJSON, id, memory, raw, video } from './helpers.ts'
 
 const on = { ...cfg, playerFallback: true, playerRequestInterval: 120_000 }

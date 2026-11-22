@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 // @ts-ignore plain browser module without type declarations
-import * as coreModule from '../public/core.js'
+import * as coreModule from '../src/public/core.js'
 const core: any = coreModule
 
 const row = (n: number, title: string, extra: Record<string, unknown> = {}) => ({
@@ -65,8 +65,8 @@ test('dashboard layouts place every video without overlapping group discs', () =
 })
 
 test('dashboard page is self-contained, CSP-compatible and avoids HTML injection', () => {
-  const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
-  const js = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8') + readFileSync(new URL('../public/core.js', import.meta.url), 'utf8')
+  const html = readFileSync(new URL('../src/public/index.html', import.meta.url), 'utf8')
+  const js = readFileSync(new URL('../src/public/app.js', import.meta.url), 'utf8') + readFileSync(new URL('../src/public/core.js', import.meta.url), 'utf8')
   assert.ok(html.includes('src="/app.js"') && html.includes('href="/style.css"'))
   assert.ok(html.includes('CC BY-SA 4.0'), 'logo font attribution is shown')
   for (const id of ['fit', 'random', 'copy', 'reset']) assert.ok(html.includes(`id="${id}"`), id)

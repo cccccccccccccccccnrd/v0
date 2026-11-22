@@ -14,7 +14,7 @@ export function config(env = process.env) {
     }
     return value
   }
-  const dataDir = resolve(env.DATA_DIR || fileURLToPath(new URL('./data', import.meta.url)))
+  const dataDir = resolve(env.DATA_DIR || fileURLToPath(new URL('../data', import.meta.url)))
   return {
     dataDir, database: resolve(dataDir, 'yt0.sqlite'),
     host: env.HOST || '127.0.0.1',

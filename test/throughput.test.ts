@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { executeTask, runWorkers } from '../crawler.ts'
-import { createProvider, parseFeed, type Provider } from '../provider.ts'
-import { controlledFetch, CrawlError } from '../network.ts'
+import { executeTask, runWorkers } from '../src/crawler.ts'
+import { createProvider, parseFeed, type Provider } from '../src/provider.ts'
+import { controlledFetch, CrawlError } from '../src/network.ts'
 import { memory, cfg, NOW, id, channel, feedXml, searchResponse, htmlJSON, until } from './helpers.ts'
 
 const card = () => ({ id: id(), hint: 'zero' as const, channelId: channel, seconds: 60 })

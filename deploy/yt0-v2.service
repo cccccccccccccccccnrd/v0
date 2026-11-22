@@ -13,7 +13,7 @@ Environment=DATA_DIR=/var/lib/yt0
 Environment=HOST=127.0.0.1
 Environment=PORT=3667
 EnvironmentFile=-/etc/yt0-v2.env
-ExecStart=/usr/bin/node main.ts
+ExecStart=/usr/bin/node src/main.ts
 Restart=always
 RestartSec=10
 TimeoutStopSec=45

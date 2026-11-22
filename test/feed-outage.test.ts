@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { controlledFetch, CrawlError, FEED_OUTAGE_CHANNELS } from '../network.ts'
+import { controlledFetch, CrawlError, FEED_OUTAGE_CHANNELS } from '../src/network.ts'
 import { memory } from './helpers.ts'
 
 const feed = (n: number) => `https://www.youtube.com/feeds/videos.xml?channel_id=UC${String(n).padStart(22, 'a')}`

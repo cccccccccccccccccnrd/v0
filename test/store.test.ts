@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { spawnSync } from 'node:child_process'
-import { openStore, backupDatabase } from '../store.ts'
-import { config } from '../config.ts'
+import { openStore, backupDatabase } from '../src/store.ts'
+import { config } from '../src/config.ts'
 import { cfg, id, video, memory, temp, NOW, channel } from './helpers.ts'
 
 test('configuration validates resource limits and keeps its defaults', () => {
@@ -231,7 +231,7 @@ test('CLI can seed and back up without launching a crawler', (t) => {
   const dir=temp(t)
   const seed=join(dir,'seeds.txt')
   writeFileSync(seed,'word\nword\n# comment\nsecond\n')
-  const run=(args:string[])=>spawnSync(process.execPath,[new URL('../cli.ts',import.meta.url).pathname,...args],{
+  const run=(args:string[])=>spawnSync(process.execPath,[new URL('../src/cli.ts',import.meta.url).pathname,...args],{
     encoding:'utf8',env:{...process.env,DATA_DIR:join(dir,'data')}
   })
   for(const args of [['seed',seed],['backup',join(dir,'backup.sqlite')]]) {

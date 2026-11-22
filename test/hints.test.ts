@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { searchNodes } from '../page.ts'
-import { candidate } from '../provider.ts'
-import { enqueueCandidates } from '../crawler.ts'
-import { DAY } from '../config.ts'
+import { searchNodes } from '../src/page.ts'
+import { candidate } from '../src/provider.ts'
+import { enqueueCandidates } from '../src/crawler.ts'
+import { DAY } from '../src/config.ts'
 import { id, video, memory, NOW, channel, searchResponse, htmlJSON } from './helpers.ts'
 
 test('zero-view hints at least seven days old are archived immediately as unverified, then upgraded', (t) => {
@@ -43,22 +43,8 @@ test('search cards carry a title and a conservative age for hint records', () =>
   assert.ok((card?.minAgeDays ?? 0) >= 7)
 })
 
-test('backfill archives only queued zero candidates that are already seven days old', (t) => {
-  const store = memory(t)
-  const old = { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 90, publishedAt: NOW - 10 * DAY, title: 'Waiting' }
-  const young = { id: id(2), hint: 'zero' as const, channelId: channel, seconds: 90, publishedAt: NOW - 2 * DAY, title: 'Young' }
-  store.enqueue({ id: id(1), source: 'q', queryKey: '', candidate: old }, NOW - 20 * DAY, NOW, 'zero')
-  store.enqueue({ id: id(2), source: 'q', queryKey: '', candidate: young }, NOW - 20 * DAY, NOW + 5 * DAY, 'zero')
-  assert.deepEqual(store.backfillHints(NOW), { added: 1 })
-  assert.deepEqual(store.backfillHints(NOW), { added: 0 })
-  assert.deepEqual(store.page(10).map((v) => [v.videoId, v.verification, v.title]), [[id(1), 'hint', 'Waiting']])
-  assert.ok(store.db.prepare('SELECT 1 FROM tasks WHERE key=?').get('verify:' + id(1)))
-  // Once matured, the young one is archived when its verification task runs (or by a later backfill).
-  assert.deepEqual(store.backfillHints(NOW + 5 * DAY), { added: 1 })
-})
-
 test('a matured zero candidate is archived as a hint when its check runs, even if verification fails', async (t) => {
-  const { executeTask } = await import('../crawler.ts')
+  const { executeTask } = await import('../src/crawler.ts')
   const { cfg } = await import('./helpers.ts')
   const store = memory(t)
   const card = { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 60, publishedAt: Date.now() - 8 * DAY, title: 'Matured' }

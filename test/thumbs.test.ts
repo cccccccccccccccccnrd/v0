@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { openStore } from '../store.ts'
-import { fingerprint, runThumbs, DecodeError, LOOK_BYTES } from '../thumbs.ts'
+import { openStore } from '../src/store.ts'
+import { fingerprint, runThumbs, DecodeError, LOOK_BYTES } from '../src/thumbs.ts'
 import { cfg, id, video, NOW } from './helpers.ts'
 
 const pixels = new Uint8Array(LOOK_BYTES).fill(200)

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { join } from 'node:path'
-import { config } from '../config.ts'
-import { controlledFetch, CrawlError } from '../network.ts'
-import { openStore } from '../store.ts'
+import { config } from '../src/config.ts'
+import { controlledFetch, CrawlError } from '../src/network.ts'
+import { openStore } from '../src/store.ts'
 import { cfg, memory, temp, NOW, id, channel } from './helpers.ts'
 
 const network = { rps: 20, timeout: 1000, searchRequestInterval: 150 }

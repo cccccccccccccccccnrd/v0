@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { join } from 'node:path'
-import { createProvider } from '../provider.ts'
-import { openStore } from '../store.ts'
-import { MIN_AGE } from '../config.ts'
-import { CrawlError } from '../network.ts'
+import { createProvider } from '../src/provider.ts'
+import { openStore } from '../src/store.ts'
+import { MIN_AGE } from '../src/config.ts'
+import { CrawlError } from '../src/network.ts'
 import { cfg, memory, temp, NOW, channel, id, feedXml } from './helpers.ts'
 
 test('cold searches explore every age band, weighted toward older uploads, instead of draining one band', (t) => {
