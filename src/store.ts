@@ -120,6 +120,21 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       db.exec('COMMIT')
     } catch (error) { db.exec('ROLLBACK'); throw error }
   }
+  // User decision 2026-11-25: one-time recount of root_yield under the nearest-search credit, from the verified
+  // finds of the last two days (each find's channel lineage leads to the search that admitted it).
+  if (!db.prepare("SELECT 1 FROM meta WHERE key='root_yield_nearest_search'").get()) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.exec('CREATE TEMP TABLE nearest(key TEXT PRIMARY KEY, v REAL NOT NULL)')
+      db.prepare(`INSERT INTO nearest SELECT l.parent_key,count(*) FROM videos v
+        JOIN source_lineage l ON l.key='channel:'||json_extract(v.record,'$.author.id')
+        WHERE v.verification='verified' AND v.found_at>=? AND l.parent_key LIKE 'search:%' GROUP BY l.parent_key`).run(Date.now() - 2 * DAY)
+      db.exec(`UPDATE tasks SET root_yield=coalesce((SELECT v FROM nearest n WHERE n.key=tasks.key),0) WHERE kind='search';
+        DROP TABLE nearest`)
+      db.exec("INSERT INTO meta VALUES('root_yield_nearest_search','2026-11-25')")
+      db.exec('COMMIT')
+    } catch (error) { db.exec('ROLLBACK'); throw error }
+  }
   const lookup = db.prepare('SELECT status,checked_at FROM seen WHERE video_id=?')
   const archived = db.prepare('SELECT verification FROM videos WHERE video_id=?')
   const remember = db.prepare(`INSERT INTO seen VALUES(?,?,?)
@@ -174,6 +189,15 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
   }
   function sourceRoot(key: string) {
     return db.prepare('SELECT root_key FROM source_lineage WHERE key=?').get(key)?.root_key as string | undefined
+  }
+  // User decision 2026-11-25: credit goes to the nearest search: the source itself if it is a search, else the
+  // search that admitted the channel (a few lineage steps at most), not the seed at the root of the lineage.
+  function creditedSearch(key: string) {
+    for (let step = 0; key && step < 4; step++) {
+      if (key.startsWith('search:')) return key
+      key = String(db.prepare('SELECT parent_key FROM source_lineage WHERE key=?').get(key)?.parent_key ?? '')
+    }
+    return undefined
   }
   function observeSource(key: string, parent = '', now = Date.now()) {
     if (key) db.prepare('INSERT OR IGNORE INTO source_lineage VALUES(?,?,?,?)')
@@ -323,7 +347,8 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       sourceMetric(queryKey, 'verified_zero', now)
       const root = sourceRoot(queryKey)
       if (root) sourceMetric(root, 'root_verified_zero', now)
-      if (root) db.prepare("UPDATE tasks SET root_yield=root_yield+1 WHERE key=? AND kind='search'").run(root)
+      const credited = creditedSearch(queryKey)
+      if (credited) db.prepare("UPDATE tasks SET root_yield=root_yield+1 WHERE key=? AND kind='search'").run(credited)
       metric(root ? 'root_attributed_zero' : 'root_unattributed_zero', 1, now)
     }
     return result.changes === 1
