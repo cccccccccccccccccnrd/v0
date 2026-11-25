@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { executeTask, enqueueCandidates, runWorkers, titleTerms, seedFile, LOW_VIEWS } from '../src/crawler.ts'
 import { CrawlError } from '../src/network.ts'
+import { MIN_AGE } from '../src/config.ts'
 import { createProvider, type Provider } from '../src/provider.ts'
 import { cfg, id, raw, video, memory, NOW, until, channel, feedXml, searchResponse, htmlJSON } from './helpers.ts'
 
@@ -86,12 +87,15 @@ test('public search and RSS reach the durable archive without private API reques
 test('candidate priority favors explicit zero; unknown work and young feed entries are bounded', (t) => {
   const store=memory(t)
   const items=Array.from({length:20},(_,n)=>({id:id(n+1),hint:'unknown' as const}))
+  // User decision 2026-11-25: an upload that reaches the minimum age within WAIT_HORIZON waits; a younger one is skipped.
   const count=enqueueCandidates(store,[...items,{id:id(99),hint:'zero'},
-    {id:id(98),hint:'positive'},{id:id(97),hint:'zero',publishedAt:NOW}],'term','',NOW)
+    {id:id(98),hint:'positive'},{id:id(97),hint:'zero',publishedAt:NOW-MIN_AGE+3*86_400_000},{id:id(96),hint:'zero',publishedAt:NOW}],'term','',NOW)
   assert.equal(count,3)
   assert.equal(JSON.parse(store.claim(NOW)!.payload).id,id(99))
   assert.equal(store.taskCount('verify'),3)
-  assert.equal(store.db.prepare("SELECT due_at FROM tasks WHERE key=?").get('verify:' + id(97))!.due_at, NOW + 7 * 86_400_000)
+  assert.equal(store.db.prepare("SELECT due_at FROM tasks WHERE key=?").get('verify:' + id(97))!.due_at, NOW + 3*86_400_000)
+  assert.equal(store.db.prepare('SELECT 1 FROM tasks WHERE key=?').get('verify:' + id(96)), undefined)
+  assert.equal(store.db.prepare("SELECT value FROM metrics WHERE name='candidates_too_young'").get()!.value, 1)
   assert.equal(store.db.prepare('SELECT status FROM seen WHERE video_id=?').get(id(98))!.status,'hint_nonzero')
 })
 

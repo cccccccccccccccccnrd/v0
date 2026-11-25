@@ -9,7 +9,8 @@ import { gunzipSync } from 'node:zlib'
 import http from 'node:http'
 import { bakeSnapshot, bakeInWorker, startBaking, slim, TOPIC_KS } from '../src/bake.ts'
 import { createApp } from '../src/server.ts'
-import { memory, video, NOW } from './helpers.ts'
+import { memory, video, NOW, cfg, id, temp } from './helpers.ts'
+import { openStore } from '../src/store.ts'
 // @ts-ignore plain browser module without type declarations
 import * as coreModule from '../src/public/core.js'
 const core: any = coreModule
@@ -115,6 +116,8 @@ test('/api/snapshot serves the baked file with gzip and ETag revalidation; /api/
   const first = await get('/api/snapshot', { 'accept-encoding': 'gzip' })
   assert.equal(first.status, 200); assert.equal(first.headers['content-encoding'], 'gzip')
   assert.equal(JSON.parse(gunzipSync(first.body).toString('utf8')).count, 40)
+  assert.equal(first.headers['x-archive-videos'], '40')
+  assert.equal(Number(first.headers['x-json-length']), gunzipSync(first.body).length)
   assert.equal((await get('/api/snapshot', { 'accept-encoding': 'gzip', 'if-none-match': String(first.headers.etag) })).status, 304)
   const plain = await get('/api/snapshot', { 'accept-encoding': 'identity' })
   assert.equal(plain.headers['content-encoding'], undefined); assert.notEqual(plain.headers.etag, first.headers.etag)
@@ -142,5 +145,23 @@ test('bakes run on clock slots (:00 for the hour) and a restart keeps a file fro
   // The bake started right after a slot boundary.
   assert.ok(snap.bakedAt % interval < 400, `started ${snap.bakedAt % interval} ms after the slot`)
   assert.ok(statSync(file).mtimeMs >= snap.bakedAt)
+  controller.abort(); await job
+})
+
+test('the bake worker reads the archive from the database file itself, with the same rows as /api/videos', async (t) => {
+  const { readSlimRows } = await import('../src/bake.ts')
+  const dir = temp(t), database = join(dir, 'yt0.sqlite')
+  const store = openStore(database, cfg)
+  t.after(() => store.close())
+  for (let n = 1; n <= 30; n++) store.save(video(n), '', NOW + n * 1000)
+  store.db.prepare('INSERT INTO thumbs VALUES(?,?,?)').run(id(7), 'AAAA', NOW)
+  assert.deepEqual(readSlimRows(database), store.page(1000).map(slim))
+  assert.equal(readSlimRows(database).find((v) => v.videoId === id(7))?.look, 'AAAA')
+  const snap = JSON.parse(gunzipSync(await bakeInWorker({ database })).toString('utf8'))
+  assert.equal(snap.count, 30); assert.deepEqual(snap.videos, store.page(1000).map(slim))
+  const file = join(dir, 'snapshot.json.gz'), controller = new AbortController()
+  const job = startBaking({ database }, file, 3_600_000, controller.signal, 0)
+  for (let k = 0; k < 200 && !existsSync(file); k++) await new Promise((r) => setTimeout(r, 50))
+  assert.equal(JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')).count, 30)
   controller.abort(); await job
 })

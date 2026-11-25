@@ -2,7 +2,13 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const DAY = 86_400_000
-export const MIN_AGE = 7 * DAY
+// User decision 2026-11-25: a video qualifies (verified or hint) only from one year after upload (21 days since
+// 2026-11-22, seven days before). Rows archived earlier under the shorter rules stay as they are.
+export const MIN_AGE_DAYS = 365
+export const MIN_AGE = MIN_AGE_DAYS * DAY
+// User decision 2026-11-25 ("the waiting stuff is not so important"): a candidate is only kept for a later check when it
+// reaches the minimum age within this horizon; younger uploads are skipped instead of waiting up to a year.
+export const WAIT_HORIZON = 7 * DAY
 export const VIDEO_ID = /^[\w-]{11}$/
 export const CHANNEL_ID = /^UC[\w-]{22}$/
 
@@ -44,8 +50,10 @@ export type Kind = 'search' | 'channel' | 'verify'
 export type Source = Kind | 'catalogue' | 'player'
 export interface SearchSpec { term: string; window: 'recent' | 'older' | 'archive' }
 export function searchRange(window: SearchSpec['window'], now = Date.now()): [number, number, number] {
-  return window === 'recent' ? [7,37,1] : window === 'older' ? [37,187,7]
-    : [187,Math.floor((now - Date.UTC(2005,0,1)) / DAY),30]
+  // The recent window starts at the minimum age. 2026-11-25 (one-year minimum): recent 365–395 days, older 395–730,
+  // archive 730 days back to 2005 (2026-11-22: 21–51, 51–187, 187+).
+  return window === 'recent' ? [MIN_AGE_DAYS,MIN_AGE_DAYS + 30,1] : window === 'older' ? [MIN_AGE_DAYS + 30,2 * MIN_AGE_DAYS,7]
+    : [2 * MIN_AGE_DAYS,Math.floor((now - Date.UTC(2005,0,1)) / DAY),30]
 }
 export function publicationTime(date: string) {
   const published = Date.parse(date)

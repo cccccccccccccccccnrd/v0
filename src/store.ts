@@ -2,11 +2,13 @@ import { randomUUID, createHash } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, closeSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync, backup } from 'node:sqlite'
-import { DAY, MIN_AGE, VIDEO_ID, CHANNEL_ID, searchRange, publicationTime, type Config, type Kind, type Source, type SearchSpec, type Video, type Candidate } from './config.ts'
+import { DAY, MIN_AGE, WAIT_HORIZON, VIDEO_ID, CHANNEL_ID, searchRange, publicationTime, type Config, type Kind, type Source, type SearchSpec, type Video, type Candidate } from './config.ts'
 
 export interface Task {
   id: number; key: string; kind: Kind; payload: string; token: string
   failures: number; runs: number; found: number; last_found: number; empty_runs: number
+  /** Searches only: verified finds of channels this search led to, decayed by 10% per run (2026-11-22). */
+  root_yield?: number
 }
 export interface VerifyPayload { id: string; source: string; queryKey: string; candidate?: Candidate; player?: boolean }
 const LEASE = 120_000
@@ -35,7 +37,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       locked_until INTEGER NOT NULL DEFAULT 0, token TEXT NOT NULL DEFAULT '',
       failures INTEGER NOT NULL DEFAULT 0, runs INTEGER NOT NULL DEFAULT 0,
       found INTEGER NOT NULL DEFAULT 0, last_found INTEGER NOT NULL DEFAULT 0,
-      empty_runs INTEGER NOT NULL DEFAULT 0, last_error TEXT
+      empty_runs INTEGER NOT NULL DEFAULT 0, last_error TEXT, root_yield REAL NOT NULL DEFAULT 0
     ) STRICT;
     CREATE INDEX IF NOT EXISTS tasks_ready ON tasks(priority DESC, due_at, locked_until);
     CREATE INDEX IF NOT EXISTS tasks_kind ON tasks(kind);
@@ -86,6 +88,21 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     UPDATE tasks SET priority=10 WHERE kind='search' AND priority!=10;
     PRAGMA user_version=2;
   `)
+    // User decision 2026-11-22: searches are ranked by the verified finds of the channels they led to ("root yield").
+    // Older databases get the column, filled from the last seven days of root_verified_zero.
+    if (!db.prepare('PRAGMA table_info(tasks)').all().some((c) => c.name === 'root_yield')) {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.exec('ALTER TABLE tasks ADD COLUMN root_yield REAL NOT NULL DEFAULT 0')
+        // One pass over the recent days of source_metrics (its key is (day,key,name)), then a keyed update.
+        db.exec('CREATE TEMP TABLE recent_root(key TEXT PRIMARY KEY, v REAL NOT NULL)')
+        db.prepare(`INSERT INTO recent_root SELECT key,sum(value) FROM source_metrics WHERE day>=? AND name='root_verified_zero' AND key LIKE 'search:%' GROUP BY key`)
+          .run(new Date(Date.now() - 7 * DAY).toISOString().slice(0, 10))
+        db.exec(`UPDATE tasks SET root_yield=(SELECT v FROM recent_root r WHERE r.key=tasks.key) WHERE kind='search' AND key IN (SELECT key FROM recent_root);
+          DROP TABLE recent_root`)
+        db.exec('COMMIT')
+      } catch (error) { db.exec('ROLLBACK'); throw error }
+    }
   } catch (error) { db.close(); throw error }
   const metricStmt = db.prepare(`INSERT INTO metrics VALUES(?,?,?)
     ON CONFLICT(day,name) DO UPDATE SET value=value+excluded.value`)
@@ -127,12 +144,19 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
   const claimStmt = db.prepare(`UPDATE tasks SET token=?,locked_until=? WHERE id=(
     SELECT id FROM tasks WHERE due_at<=? AND locked_until<=?
     AND ${taskPause} <= ?
-    ORDER BY priority + CASE WHEN kind='search' AND found>0 THEN 2 ELSE 0 END
-      + CASE WHEN kind='search' AND json_extract(payload,'$.window')=? THEN 3 ELSE 0 END DESC,due_at,id LIMIT 1) RETURNING *`)
+    ORDER BY priority + CASE WHEN kind='search' AND NOT ? AND (found>0 OR root_yield>=0.5) THEN 2 ELSE 0 END
+      + CASE WHEN kind='search' AND json_extract(payload,'$.window')=? THEN 3 ELSE 0 END DESC,
+      CASE WHEN kind='search' AND ? THEN runs=0 ELSE 0 END DESC,
+      CASE WHEN kind='search' AND NOT ? THEN root_yield+found ELSE 0 END DESC,due_at,id LIMIT 1) RETURNING *`)
   // The turn's window (+3) outranks past yield (+2), so the 2026-11-18 window split holds; yield orders searches within a window.
-  // User decision 2026-11-20 (was 80/15/5 since 2026-11-18): 50% archive (187+ days), 45% older, 5% recent.
-  // 2026-11-19 data: archive runs queued 0.2 candidates each, older runs 1.7; archive tripled verified old finds.
-  const WINDOW_TURNS = 'AOAOAOAOAOAOAOAOAOAR'
+  // User decision 2026-11-22: within the window, searches with the highest root yield (verified finds of the channels
+  // they found, decayed per run) go first. Every EXPLORE_EVERY-th search turn instead prefers terms that never ran,
+  // so new terms keep getting tried (2026-11-22: 11,854 due searches had never run while 20 terms gave 48% of finds).
+  const EXPLORE_EVERY = 5
+  // User decision 2026-11-23 "focus search on older videos" (was 25/70/5 since 2026-11-22, 50/45/5 since 2026-11-20,
+  // 80/15/5 since 2026-11-18): 75% archive, 20% older, 5% recent. Data 2026-11-22 21:24 to 2026-11-23 07:00 (yield-ranked
+  // searches): per search run, archive 0.97 verified finds of which 0.75 at least a year old; older 2.0, of which 0.19.
+  const WINDOW_TURNS = 'AAAOAAAOAAAOAAAOAAAR'
   const WINDOW_NAMES: Record<string, SearchSpec['window']> = { A: 'archive', O: 'older', R: 'recent' }
   const decode = (rows: Record<string, unknown>[]) => rows.map((r) => ({
     ...JSON.parse(r.record as string), verification: r.verification, foundAt: r.found_at, ...(r.look ? { look: r.look } : {})
@@ -228,13 +252,21 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       return rows.length
     } catch (error) { db.exec('ROLLBACK'); throw error }
   }
+  // User decision 2026-11-24: a channel whose last read found nothing new is retired once its first day is over, even when
+  // it produced verified videos. 2026-11-24 data: 99% of channel finds came on the channel's first day (re-reads after it:
+  // 111 of 8,977 in 48 h), while kept channels filled MAX_CHANNELS (6,000) and stopped new channels from searches.
+  // Within its first day only a channel without finds or pending checks is retired. User decision 2026-11-25: after the
+  // first day pending checks no longer keep a channel (1,218 of 1,222 older channels were kept only by them); a verify task
+  // reads the channel's feed itself when its upload matures (provider verify()). A retired channel can come back when a
+  // search finds it again after 7 days (channel()).
   function retireChannels(now = Date.now()) {
     db.exec('BEGIN IMMEDIATE')
     try {
-      const rows = db.prepare(`SELECT id,payload FROM tasks WHERE kind='channel' AND empty_runs>0 AND found=0 AND locked_until<=?
-        AND NOT EXISTS(SELECT 1 FROM videos WHERE verification='verified' AND json_extract(record,'$.author.id')=json_extract(tasks.payload,'$.id'))
-        AND NOT EXISTS(SELECT 1 FROM tasks AS pending WHERE pending.kind='verify' AND json_extract(pending.payload,'$.candidate.channelId')=json_extract(tasks.payload,'$.id'))
-        LIMIT 2000`).all(now)
+      const rows = db.prepare(`SELECT id,payload FROM tasks WHERE kind='channel' AND empty_runs>0 AND locked_until<=?
+        AND (coalesce((SELECT first_seen FROM source_lineage WHERE source_lineage.key=tasks.key),0)<=?
+          OR (found=0 AND NOT EXISTS(SELECT 1 FROM videos WHERE verification='verified' AND json_extract(record,'$.author.id')=json_extract(tasks.payload,'$.id'))
+            AND NOT EXISTS(SELECT 1 FROM tasks AS pending WHERE pending.kind='verify' AND json_extract(pending.payload,'$.candidate.channelId')=json_extract(tasks.payload,'$.id'))))
+        LIMIT 2000`).all(now, now - DAY)
       for (const row of rows) {
         db.prepare('INSERT INTO retired_channels VALUES(?,?) ON CONFLICT(id) DO UPDATE SET retired_at=excluded.retired_at').run(JSON.parse(String(row.payload)).id, now)
         db.prepare('DELETE FROM tasks WHERE id=?').run(row.id)
@@ -291,6 +323,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
       sourceMetric(queryKey, 'verified_zero', now)
       const root = sourceRoot(queryKey)
       if (root) sourceMetric(root, 'root_verified_zero', now)
+      if (root) db.prepare("UPDATE tasks SET root_yield=root_yield+1 WHERE key=? AND kind='search'").run(root)
       metric(root ? 'root_attributed_zero' : 'root_unattributed_zero', 1, now)
     }
     return result.changes === 1
@@ -298,7 +331,7 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
   // User decision 2026-11-09: a zero-view hint ("looked like zero once") is archived immediately, unverified.
   function saveHint(card: Candidate, source: string, now = Date.now()) {
     if (card.hint !== 'zero' || !VIDEO_ID.test(card.id)) return false
-    // Unverified hints still require a known upload age of at least seven days.
+    // Unverified hints still require a known upload age of at least the minimum (MIN_AGE).
     const oldEnough = card.publishedAt !== undefined ? card.publishedAt + MIN_AGE <= now : (card.minAgeDays ?? 0) * DAY >= MIN_AGE
     if (!oldEnough) return false
     const seconds = Number.isSafeInteger(card.seconds) && card.seconds! > 0 ? card.seconds! : 0
@@ -332,7 +365,8 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     claim(now = Date.now()): Task | undefined {
       const turn = Number(meta('search_window_turn') || 0)
       const window = WINDOW_NAMES[WINDOW_TURNS[turn % WINDOW_TURNS.length]]
-      const task = claimStmt.get(randomUUID(), now + LEASE, now, now, ...pauses(), now, window) as unknown as Task | undefined
+      const explore = Number(turn % EXPLORE_EVERY === EXPLORE_EVERY - 1)
+      const task = claimStmt.get(randomUUID(), now + LEASE, now, now, ...pauses(), now, explore, window, explore, explore) as unknown as Task | undefined
       if (task?.kind === 'search') setMeta('search_window_turn', String((turn + 1) % WINDOW_TURNS.length))
       return task
     },
@@ -366,7 +400,8 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
     },
     release(task: Task, due: number, empty = false) {
       db.prepare(`UPDATE tasks SET due_at=?,locked_until=0,token='',failures=0,runs=runs+1,
-        last_found=found,empty_runs=CASE WHEN ? THEN empty_runs+1 ELSE 0 END,last_error=NULL
+        last_found=found,empty_runs=CASE WHEN ? THEN empty_runs+1 ELSE 0 END,last_error=NULL,
+        root_yield=CASE WHEN kind='search' THEN root_yield*0.9 ELSE root_yield END
         WHERE id=? AND token=?`).run(due, Number(empty), task.id, task.token)
     },
     fail(task: Task, due: number, error: string) {
@@ -380,6 +415,8 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
         : db.prepare('SELECT videos.*,thumbs.look FROM videos LEFT JOIN thumbs USING(video_id) ORDER BY found_at DESC,video_id DESC LIMIT ?').all(limit)
       return decode(rows)
     },
+    // Archive size for the dashboard loading pill (user request 2026-11-22).
+    videoTotal() { return Number((db.prepare("SELECT coalesce(sum(n),0) AS n FROM counters WHERE name LIKE 'video:%'").get() as { n: number }).n) },
     summary(now = Date.now()) {
       return {
         videos: db.prepare("SELECT substr(name,7) AS verification,n AS count FROM counters WHERE name LIKE 'video:%'").all(),
@@ -421,6 +458,10 @@ export function openStore(filename: string, limits: Pick<Config, 'maxPending' | 
         JSON.stringify({ id: row.video_id, source: row.source_query, queryKey: '' }), 60, now)
     },
     maintain(ttl: number, now = Date.now()) {
+      // User decision 2026-11-25: no waiting beyond WAIT_HORIZON (also clears checks queued under the 21-day rule).
+      const dropped = db.prepare(`DELETE FROM tasks WHERE kind='verify' AND locked_until<=?
+        AND json_type(payload,'$.candidate.publishedAt')='integer' AND json_extract(payload,'$.candidate.publishedAt')+?>?`).run(now, MIN_AGE, now + WAIT_HORIZON).changes
+      if (dropped) metric('checks_young_dropped', Number(dropped), now)
       db.prepare(`DELETE FROM seen WHERE checked_at<? AND NOT EXISTS(
         SELECT 1 FROM tasks WHERE key='verify:'||seen.video_id)`).run(now - ttl)
       retireChannels(now)

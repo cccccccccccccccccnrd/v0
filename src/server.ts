@@ -85,7 +85,11 @@ export function createApp(store: Store, mapFile = '', snapshotFile = '') {
         if (cached?.mtime !== info.mtimeMs) gzCache.set(url.pathname, cached = { mtime: info.mtimeMs, gz: await readFile(file) })
         // The file only changes when re-baked, so repeat visits revalidate with an ETag instead of downloading again.
         const etag = '"' + Math.round(info.mtimeMs).toString(36) + '-' + cached.gz.length.toString(36) + (acceptsGzip ? '-gz' : '') + '"'
-        const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache', vary: 'accept-encoding', etag }
+        const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache', vary: 'accept-encoding', etag }
+        // User request 2026-11-22: "Loading xx% (xxx videos)". The browser reads the body unzipped, so it needs the
+        // unzipped size (gzip trailer; the files are far below 4 GiB) for a percentage, plus the current archive size.
+        if (cached.gz.length >= 4) headers['x-json-length'] = String(cached.gz.readUInt32LE(cached.gz.length - 4))
+        if (url.pathname === '/api/snapshot') headers['x-archive-videos'] = String(store.videoTotal())
         if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return }
         res.writeHead(200, { ...headers, ...(acceptsGzip ? { 'content-encoding': 'gzip' } : {}) })
         res.end(req.method === 'HEAD' ? undefined : acceptsGzip ? cached.gz : gunzipSync(cached.gz))

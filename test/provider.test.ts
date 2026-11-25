@@ -22,15 +22,15 @@ test('only literal raw zero qualifies; missing, coerced, rounded, and malformed 
   }
 })
 
-test('seven-day eligibility is enforced, with a conservative date-only boundary', () => {
+test('the minimum age (365 days since 2026-11-25) is enforced, with a conservative date-only boundary', () => {
   const p=raw()
   p.microformat.playerMicroformatRenderer.uploadDate=new Date(NOW-MIN_AGE).toISOString()
   assert.equal(parsePlayer(p,id(),NOW).status,'zero')
   p.microformat.playerMicroformatRenderer.uploadDate=new Date(NOW-MIN_AGE+1).toISOString()
   assert.equal(parsePlayer(p,id(),NOW).status,'young')
-  p.microformat.playerMicroformatRenderer.uploadDate='2026-10-18'
+  p.microformat.playerMicroformatRenderer.uploadDate='2025-10-25'
   assert.equal(parsePlayer(p,id(),NOW).status,'young')
-  p.microformat.playerMicroformatRenderer.uploadDate='2026-10-17'
+  p.microformat.playerMicroformatRenderer.uploadDate='2025-10-24'
   assert.equal(parsePlayer(p,id(),NOW).status,'zero')
   for(const date of ['','0','2020-02-31','yesterday','2020-13-01']) {
     p.microformat.playerMicroformatRenderer.uploadDate=date

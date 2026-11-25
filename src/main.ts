@@ -1,7 +1,7 @@
 import { mkdir, statfs } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { config, log } from './config.ts'
+import { config, log, MIN_AGE_DAYS } from './config.ts'
 import { openStore } from './store.ts'
 import { controlledFetch, retryDelay, requestContext } from './network.ts'
 import { createProvider } from './provider.ts'
@@ -44,7 +44,7 @@ async function crawl() {
     try {
       const provider = await createProvider(fetcher, cfg.pages, store.isVerified,
         name => store.measure(name, requestContext.getStore()?.sourceKey), (channelId, floor) => store.setFeedFloor(channelId, floor))
-      log('crawler_ready', { workers: cfg.workers, requestsPerSecond: cfg.rps, searchRequestIntervalSeconds: cfg.searchRequestInterval / 1000, minAgeDays: 7,
+      log('crawler_ready', { workers: cfg.workers, requestsPerSecond: cfg.rps, searchRequestIntervalSeconds: cfg.searchRequestInterval / 1000, minAgeDays: MIN_AGE_DAYS,
         verification: cfg.playerFallback ? 'rss+public-search+player-fallback' : 'rss+public-search',
         ...(cfg.playerFallback ? { playerRequestIntervalSeconds: cfg.playerRequestInterval / 1000 } : {}) })
       await runWorkers(store, provider, cfg, controller.signal)
@@ -59,8 +59,8 @@ async function crawl() {
 }
 const workers = crawl()
 const thumbJob = runThumbs(store, cfg, controller.signal).catch((error) => { log('thumbs_error', { error: String(error) }) })
-// Whole archive, newest first, exactly as /api/videos pages it.
-const bakeJob = startBaking(() => store.page(10_000_000), snapshotFile, cfg.snapshotInterval, controller.signal)
+// Whole archive, newest first, exactly as /api/videos pages it; the bake worker reads it from the database file itself.
+const bakeJob = startBaking({ database: cfg.database }, snapshotFile, cfg.snapshotInterval, controller.signal)
 function shutdown() {
   if (ending) return ending
   ending = (async () => {

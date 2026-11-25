@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { DAY, MIN_AGE, log, type Config, type SearchSpec, type Candidate } from './config.ts'
+import { DAY, MIN_AGE, WAIT_HORIZON, log, type Config, type SearchSpec, type Candidate } from './config.ts'
 import type { Store, Task, VerifyPayload } from './store.ts'
 import { CrawlError, retryDelay, requestContext } from './network.ts'
 import { PartialSearchError, FEED_RETRIES, type Provider } from './provider.ts'
@@ -24,7 +24,8 @@ export function titleTerms(title: string) {
     .filter((v) => !stop.has(v)).slice(-2)
 }
 function nextSearch(task: Task, cfg: Config, added: number) {
-  const productive = task.found > task.last_found
+  // 2026-11-22: a search whose channels keep producing verified finds also counts as productive (3-hour revisit).
+  const productive = task.found > task.last_found || (task.root_yield ?? 0) >= 1
   return Math.min(7 * DAY, productive ? cfg.searchInterval / 2
     : cfg.searchInterval * (added ? 1 : 2 ** Math.min(task.empty_runs + 1, 5)))
 }
@@ -52,6 +53,7 @@ export function enqueueCandidates(store: Store, items: Candidate[], source: stri
     if (item.hint === 'positive') { store.remember(item.id, 'hint_nonzero', now); continue }
     if (item.hint === 'unknown' && unknown >= 1) continue
     const due = Math.max(now, (item.publishedAt ?? 0) + MIN_AGE)
+    if (due > now + WAIT_HORIZON) { store.metric('candidates_too_young', 1, now); continue }
     if (store.enqueue({ id: item.id, source, queryKey, candidate: item }, now, due, item.hint)) {
       added++
       if (item.hint === 'unknown') unknown++
@@ -103,10 +105,11 @@ export async function executeTask(task: Task, store: Store, provider: Provider, 
       store.release(task, result.retryAt + Math.round(Math.random() * 3_600_000))
       return
     }
-    if (result.status === 'young' && result.retryAt) {
+    if (result.status === 'young' && result.retryAt && result.retryAt <= Date.now() + WAIT_HORIZON) {
       store.release(task, result.retryAt + 60_000)
       return
     }
+    if (result.status === 'young') store.metric('checks_young_dropped')
     if (result.status === 'zero' && result.record) {
       result.record.meta.q = job.source
       const saved = store.save(result.record, job.queryKey)
@@ -142,6 +145,22 @@ export async function executeTask(task: Task, store: Store, provider: Provider, 
     }
     signal.throwIfAborted()
     if (!store.owns(task)) return
+    // User decision 2026-11-22: a channel's first read also saves the "No views" uploads its /videos page lists beyond
+    // the 15-entry feed, as unverified hints (same minimum age). RSS can never verify those, so no check is queued.
+    if (task.kind === 'channel' && task.runs === 0 && provider.catalogue) {
+      const inFeed = new Set(items.map((item) => item.id))
+      try {
+        const cards = await requestContext.run({ sourceKey: task.key }, () => provider.catalogue!(payload.id))
+        let saved = 0
+        for (const card of cards) if (!inFeed.has(card.id) && card.hint === 'zero' && store.saveHint(card, source)) saved++
+        if (saved) store.metric('catalogue_hints_saved', saved)
+      } catch (error) {
+        if (error instanceof CrawlError && error.scope === 'all' && [403,429].includes(error.status)) throw error
+        store.metric('catalogue_hints_unavailable')
+      }
+      signal.throwIfAborted()
+      if (!store.owns(task)) return
+    }
     const added = enqueueCandidates(store, items, source, task.key, Date.now(), task.runs)
     store.metric(task.kind + '_runs')
     const delay = task.kind === 'search' ? nextSearch(task, cfg, added)

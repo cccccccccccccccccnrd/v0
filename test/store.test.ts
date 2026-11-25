@@ -66,6 +66,26 @@ test('empty feeds free source capacity without deleting archives or pending cand
   assert.equal(store.db.prepare('SELECT priority FROM tasks WHERE key=?').get('channel:'+second)!.priority,20)
 })
 
+test('after its first day, a channel is retired once a read finds nothing new, despite verified finds or pending checks', (t) => {
+  const store=memory(t), DAY=86_400_000
+  const productive='UC'+'p'.repeat(22), waiting='UC'+'w'.repeat(22)
+  store.channel(productive,NOW); store.channel(waiting,NOW)
+  store.save({...video(1),author:{...video(1).author,id:productive}},'channel:'+productive,NOW)
+  store.save({...video(2),author:{...video(2).author,id:waiting}},'channel:'+waiting,NOW)
+  store.enqueue({id:id(3),source:'q',queryKey:'',candidate:{id:id(3),hint:'zero',channelId:waiting}},NOW)
+  store.db.prepare("UPDATE tasks SET empty_runs=1 WHERE kind='channel'").run()
+  assert.equal(store.retireChannels(NOW+DAY/2),0,'within the first day, verified finds keep a channel')
+  store.db.prepare("UPDATE tasks SET empty_runs=0 WHERE kind='channel'").run()
+  assert.equal(store.retireChannels(NOW+DAY+1),0,'a channel whose last read found something stays')
+  store.db.prepare("UPDATE tasks SET empty_runs=1 WHERE kind='channel'").run()
+  assert.equal(store.retireChannels(NOW+DAY+1),2,'user decision 2026-11-25: pending checks no longer keep a channel after its first day')
+  assert.equal(store.taskCount('channel'),0)
+  assert.equal(store.taskCount('verify'),1,'the pending check itself stays and reads the feed on its own')
+  assert.equal(store.page(10).length,2,'archived videos stay')
+  assert.equal(store.channel(productive,NOW+DAY+2),false,'no churn straight back')
+  assert.equal(store.channel(productive,NOW+9*DAY),true,'a search can bring it back after 7 days')
+})
+
 test('queue claims are atomic across connections, renewable, and reclaimable after a crash', (t) => {
   const filename=join(temp(t),'db.sqlite')
   const a=openStore(filename,cfg),b=openStore(filename,cfg)

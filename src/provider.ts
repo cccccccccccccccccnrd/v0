@@ -56,6 +56,52 @@ export function candidate(node: unknown): Candidate | null {
     ...(typeof seconds === 'number' && Number.isSafeInteger(seconds) && seconds > 0 ? { seconds } : {}) }
 }
 
+// 2026-11-22 observation: channel /videos pages show compact lockups ("0" with a play icon, "2y ago"); the full
+// "No views" / "3 views" / "2 years ago" text is only in each part's accessibilityLabel, which the parser drops.
+// Collects those labels per video from the raw page JSON.
+export function lockupLabels(raw: unknown) {
+  const labels = new Map<string, string[]>()
+  const parts = (node: unknown, out: string[], depth: number) => {
+    if (depth > 12 || !node || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const v of node) parts(v, out, depth + 1); return }
+    const o = node as ObjectValue
+    if (Array.isArray(o.metadataParts)) for (const p of o.metadataParts) { const label = string(object(p).accessibilityLabel); if (label) out.push(label) }
+    for (const v of Object.values(o)) parts(v, out, depth + 1)
+  }
+  const walk = (node: unknown, depth: number) => {
+    if (depth > 40 || !node || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const v of node) walk(v, depth + 1); return }
+    const o = node as ObjectValue
+    const lockup = object(o.lockupViewModel)
+    if (VIDEO_ID.test(string(lockup.contentId))) {
+      const out: string[] = []
+      parts(lockup.metadata, out, 0)
+      labels.set(string(lockup.contentId), out)
+      return
+    }
+    for (const v of Object.values(o)) walk(v, depth + 1)
+  }
+  walk(raw, 0)
+  return labels
+}
+// Fills a card's view hint and age from accessibility labels when the visible text gave none.
+export function withLabels(card: Candidate, labels: string[] = []): Candidate {
+  const next = { ...card }
+  if (next.hint === 'unknown') {
+    if (labels.some((v) => /^(?:no|0) views?$/i.test(v.trim()))) next.hint = 'zero'
+    else {
+      const exact = labels.map((v) => /^([1-9]\d{0,2}(?:,\d{3})*) views?$/i.exec(v.trim())).find(Boolean)
+      if (exact) { next.hint = 'positive'; next.views = Number(exact[1].replaceAll(',', '')) }
+      else if (labels.some((v) => /^[1-9][\d,.]*\s*[KMB]?\s+views?$/i.test(v.trim()))) next.hint = 'positive'
+    }
+  }
+  if (next.minAgeDays === undefined) {
+    const age = labels.map(minimumAgeDays).find((v) => v !== undefined)
+    if (age !== undefined) next.minAgeDays = age
+  }
+  return next
+}
+
 export function parsePlayer(value: unknown, id: string, now = Date.now()): Verification {
   const raw = object(value)
   const playability = object(raw.playabilityStatus)
@@ -141,6 +187,8 @@ export interface Provider {
   verify(id: string, context?: Candidate): Promise<Verification>
   player(id: string): Promise<Verification>
   channel(id: string): Promise<Candidate[]>
+  /** The channel's /videos page cards (about 30 newest uploads, with view hints and relative ages). */
+  catalogue?(id: string): Promise<Candidate[]>
 }
 // YouTube channel feeds list a channel's newest 15 uploads. A full feed proves that anything published before its
 // oldest entry has left the feed for good and can never be verified by RSS.
@@ -189,8 +237,9 @@ export async function createProvider(fetcher: typeof fetch, pages: number, isVer
     const raw = object(pageJSON(html, 'ytInitialData'))
     const owner = string(object(object(raw.metadata).channelMetadataRenderer).externalId)
     if (owner !== id) throw new CrawlError('Channel catalogue identity unavailable', 0, 0, 'channel')
+    const labels = lockupLabels(raw)
     return new Map(searchNodes(html).map(candidate).filter(card => card && card.seconds && (!card.channelId || card.channelId === id))
-      .map(card => [card!.id, card!]))
+      .map(card => [card!.id, withLabels(card!, labels.get(card!.id))]))
   }
   async function readCatalogue(id: string): Promise<Map<string, Candidate>> {
     let pending = catalogues.get(id)
@@ -292,6 +341,9 @@ export async function createProvider(fetcher: typeof fetch, pages: number, isVer
         if (error instanceof CrawlError) throw error
         throw new CrawlError(error instanceof Error ? error.message : String(error), 0, 0, 'player')
       }
+    },
+    async catalogue(id) {
+      return [...(await readCatalogue(id)).values()].map(card => ({ ...card, channelId: id }))
     },
     async channel(id) {
       const entries = await readFeed(id)

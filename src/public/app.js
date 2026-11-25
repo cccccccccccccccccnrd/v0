@@ -68,6 +68,34 @@ async function fetchPage(cursor) {
     return response.json()
   }
 }
+// User request 2026-11-22: the loading pill reads "Loading xx% (xxx videos)" and nothing else; hidden until the count is known.
+// Downloads (snapshot + map, by unzipped bytes) are 0–85 %, the preparation steps after them 85–100 %.
+const progress = { count: 0, files: {}, prep: 0 }
+function showProgress() {
+  if (!progress.count) return
+  const files = Object.values(progress.files), total = files.reduce((s, f) => s + f.total, 0)
+  const download = total ? files.reduce((s, f) => s + Math.min(f.loaded, f.total), 0) / total : 0
+  const pct = Math.min(99, Math.floor(progress.prep ? 85 + 15 * progress.prep : 85 * download))
+  $('loading').textContent = `Loading ${pct}% (${progress.count.toLocaleString('en-US')} videos)`
+  $('loading').hidden = false
+}
+// Reads a JSON response while counting bytes against the server's x-json-length header.
+async function readJson(response, key) {
+  const total = Number(response.headers.get('x-json-length')) || 0
+  if (!total || !response.body) return response.json()
+  const file = progress.files[key] = { loaded: 0, total }
+  const reader = response.body.getReader(), chunks = []
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value); file.loaded += value.length; showProgress()
+  }
+  file.loaded = total; showProgress()
+  return JSON.parse(await new Blob(chunks).text())
+}
+// Lets the pill repaint between the synchronous preparation steps.
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)))
+async function prepStep(fraction, fn) { fn(); progress.prep = fraction; showProgress(); await nextFrame() }
 // Fallback when no snapshot has been baked yet: every page of the archive.
 async function loadAll(first) {
   const rows = []
@@ -76,7 +104,9 @@ async function loadAll(first) {
     const data = await (rows.length ? fetchPage(cursor) : first)
     rows.push(...data.videos)
     cursor = data.cursor
-    $('loading').textContent = `Loading archive… ${rows.length.toLocaleString('en-US')} videos`
+    if (!progress.count) progress.count = rows.length
+    progress.files.pages = { loaded: rows.length, total: Math.max(rows.length, progress.count) }
+    showProgress()
   } while (cursor)
   return rows
 }
@@ -85,7 +115,8 @@ async function loadSnapshot() {
   try {
     const response = await fetch('/api/snapshot', { signal: AbortSignal.timeout(60_000) })
     if (!response.ok) return null
-    const snap = await response.json()
+    progress.count = Number(response.headers.get('x-archive-videos')) || progress.count
+    const snap = await readJson(response, 'snapshot')
     return snap?.version === 1 && Array.isArray(snap.videos) ? snap : null
   } catch { return null }
 }
@@ -135,7 +166,7 @@ async function loadMap() {
   try {
     const response = await fetch('/api/map', { signal: AbortSignal.timeout(30_000) })
     if (!response.ok) return null
-    const map = await response.json()
+    const map = await readJson(response, 'map')
     return map?.version === 1 && map.maps?.text ? map : null
   } catch { return null }
 }
@@ -268,10 +299,9 @@ function draw() {
   if (state.axes) drawAxes(width, height)
 
   // Every video is its thumbnail (user request 2026-11-20). Matches are drawn on top; the rest are faint.
-  const base = thumbWidth(), cap = roomCap(width, height)
+  const tw = thumbWidth(), th = tw * 9 / 16
   const off = [], on = []
-  // With room to grow, videos just outside the screen still count as neighbours (and may reach into it).
-  const m = Math.max(base, cap)
+  const m = tw
   for (const d of state.docs) {
     if (d.i >= state.shown) break
     // Without a thumbnail fingerprint (none yet, or gone from YouTube) a video is hidden at every zoom for now (user request 2026-11-21).
@@ -280,7 +310,6 @@ function draw() {
     if (x < -m || y < -m || x > width + m || y > height + m) continue
     ;(!state.matched || state.matched[d.i] ? on : off).push(d.i)
   }
-  const tw = fillWidth(on, base, cap, width, height), th = tw * 9 / 16
   ctx.globalAlpha = 0.12
   drawThumbs(off, tw, th, false)
   ctx.globalAlpha = 1
@@ -316,49 +345,14 @@ function draw() {
 // for at most MAX_THUMBS matches on screen.
 // User requests 2026-11-21: real thumbnails load earlier: at any size, once at most MAX_THUMBS matches are on screen.
 const MAX_THUMBS = 3000, REAL_FROM = 0, CELL = 6
+// User request 2026-11-22: the 2026-11-21 "grow into free space" sizing jumped around when zoomed in close (it took the
+// median gap of whatever was on screen). Removed. Second request the same day ("the thumbnails dont stay big. i want that at
+// some zoom level thumbnails stop scaling"): thumbnails now grow with the zoom (linear, like the map itself) from 9 px at the
+// whole-archive view and stop at THUMB_MAX px wide, reached at about 13× zoom; zooming further only spreads them apart.
+const THUMB_MAX = 120
 function thumbWidth() {
   const ratio = state.fitS ? state.view.s / state.fitS : 1
-  return Math.max(7, Math.min(96, 9 * Math.sqrt(ratio)))
-}
-// User requests 2026-11-21: zoomed far in, thumbnails grow into the free space instead of staying small, and all share
-// one size. For each match on screen, "room" is how wide it could be before touching its nearest drawn match (16:9 boxes,
-// small gap); every thumbnail takes the median room, so in crowded spots some overlap. Never below the normal size,
-// never beyond roomCap: that cap grows in step with the zoom from the whole-archive view, so at low zoom
-// sparse areas do not balloon, and it stops at a share of the screen.
-function roomCap(width, height) {
-  const ratio = state.fitS ? state.view.s / state.fitS : 1
-  return Math.min(9 * ratio, 0.6 * Math.min(width, height * 16 / 9))
-}
-function fillWidth(ids, base, cap, width, height) {
-  if (cap <= base || !ids.length) return base
-  const rooms = []
-  // Grid hash with cell = cap: any neighbour that limits a thumbnail below cap lies in the 3×3 cells around it.
-  const grid = new Map(), key = (cx, cy) => cx * 100003 + cy
-  const X = new Float64Array(ids.length), Y = new Float64Array(ids.length)
-  ids.forEach((i, k) => {
-    X[k] = sx(state.pos[i * 2]); Y[k] = sy(state.pos[i * 2 + 1])
-    const g = key(Math.floor(X[k] / cap), Math.floor(Y[k] / cap))
-    const cell = grid.get(g); if (cell) cell.push(k); else grid.set(g, [k])
-  })
-  for (let k = 0; k < ids.length; k++) {
-    // Only thumbnails on screen vote; the ones around the edge only act as neighbours.
-    if (X[k] < 0 || Y[k] < 0 || X[k] > width || Y[k] > height) continue
-    const cx = Math.floor(X[k] / cap), cy = Math.floor(Y[k] / cap)
-    let room = cap
-    search: for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) {
-      const cell = grid.get(key(gx, gy)); if (!cell) continue
-      for (const j of cell) {
-        if (j === k) continue
-        // Two boxes of at most this width, centred on both points, do not overlap.
-        const fit = Math.max(Math.abs(X[j] - X[k]), Math.abs(Y[j] - Y[k]) * 16 / 9) * 0.94
-        if (fit < room) { room = fit; if (room <= base) break search }
-      }
-    }
-    rooms.push(room)
-  }
-  if (!rooms.length) return base
-  rooms.sort((a, b) => a - b)
-  return Math.max(base, Math.min(cap, rooms[rooms.length >> 1]))
+  return Math.max(7, Math.min(THUMB_MAX, 9 * ratio))
 }
 
 let atlas = null
@@ -856,14 +850,15 @@ async function main() {
     state.map = map; state.loaded = true
     if (MAP_MODES.includes(state.mode) && !map) state.mode = defaults().mode
     pressModes()
-    $('loading').textContent = snap ? `Preparing ${rows.length.toLocaleString('en-US')} videos…` : `Clustering ${rows.length.toLocaleString('en-US')} titles…`
-    await new Promise((r) => setTimeout(r, 20))
-    const { docs, idf } = buildDocs(rows)
-    state.docs = docs; state.idf = idf
+    progress.count = rows.length; progress.prep = 0.01; showProgress()
+    await nextFrame()
+    await prepStep(0.3, () => { const { docs, idf } = buildDocs(rows); state.docs = docs; state.idf = idf })
     if (snap) state.baked = { snap, src }
-    attachMap()
-    computeTopics(); computeLooks(); computePcs()
-    buildAtlas()
+    await prepStep(0.4, attachMap)
+    await prepStep(0.6, computeTopics)
+    await prepStep(0.75, computeLooks)
+    await prepStep(0.85, computePcs)
+    await prepStep(0.95, buildAtlas)
     wire(); runQuery()
     // User request 2026-11-21: videos appear in batches of 500 per frame instead of all at once.
     state.shown = 0

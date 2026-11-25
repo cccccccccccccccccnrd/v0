@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads'
 import { rename, stat, writeFile } from 'node:fs/promises'
 import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
+import { DatabaseSync } from 'node:sqlite'
 import { log } from './config.ts'
 // @ts-ignore plain browser module without type declarations
 import * as coreModule from './public/core.js'
@@ -48,11 +49,29 @@ export function bakeSnapshot(rows: Row[], now = Date.now()) {
   }
 }
 
-/** Runs in a worker thread so the hourly clustering never blocks the crawler or the HTTP server. */
-export function bakeInWorker(rows: Row[], signal?: AbortSignal): Promise<Buffer> {
+/**
+ * The whole archive, newest first exactly as /api/videos pages it, already slimmed. Rows are parsed one at a time, so full
+ * records (with descriptions) never pile up. 2026-11-23: reading every full record on the main thread (store.page) at the
+ * :00 bake ran the crawler out of heap at 43k videos; the worker now opens its own read-only connection instead.
+ */
+export function readSlimRows(database: string) {
+  const db = new DatabaseSync(database, { readOnly: true })
+  try {
+    const rows: ReturnType<typeof slim>[] = []
+    for (const r of db.prepare('SELECT videos.record,videos.verification,videos.found_at,thumbs.look FROM videos LEFT JOIN thumbs USING(video_id) ORDER BY found_at DESC,video_id DESC').iterate() as Iterable<Row>)
+      rows.push(slim({ ...JSON.parse(r.record), verification: r.verification, foundAt: r.found_at, ...(r.look ? { look: r.look } : {}) }))
+    return rows
+  } finally { db.close() }
+}
+
+export type BakeInput = Row[] | { database: string }
+
+/** Runs in a worker thread so the hourly reading and clustering never block the crawler or the HTTP server. */
+export function bakeInWorker(input: BakeInput, signal?: AbortSignal) { return bakeCounted(input, signal).then((r) => r.gz) }
+function bakeCounted(input: BakeInput, signal?: AbortSignal): Promise<{ gz: Buffer; count: number }> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./bake-worker.ts', import.meta.url), { workerData: rows, resourceLimits: { maxOldGenerationSizeMb: 256 } })
-    worker.once('message', (data: Uint8Array) => resolve(Buffer.from(data.buffer, data.byteOffset, data.byteLength)))
+    const worker = new Worker(new URL('./bake-worker.ts', import.meta.url), { workerData: input, resourceLimits: { maxOldGenerationSizeMb: 384 } })
+    worker.once('message', ({ gz, count }: { gz: Uint8Array; count: number }) => resolve({ gz: Buffer.from(gz.buffer, gz.byteOffset, gz.byteLength), count }))
     worker.once('error', reject)
     worker.once('exit', (code) => { if (code) reject(new Error('Bake worker exited with ' + code)) })
     // Shutdown does not wait for a running bake.
@@ -67,7 +86,7 @@ export const gzipJson = (value: unknown) => promisify(gzip)(JSON.stringify(value
  * (user request 2026-11-21). At start it bakes after `firstDelay` only when the file is missing or older than the current slot
  * (a restart at :30 keeps the :00 file). Writes atomically so the server never serves a half file.
  */
-export function startBaking(readRows: () => Row[], file: string, interval: number, signal: AbortSignal, firstDelay = 30_000) {
+export function startBaking(source: (() => Row[]) | { database: string }, file: string, interval: number, signal: AbortSignal, firstDelay = 30_000) {
   if (!interval) return Promise.resolve()
   return new Promise<void>((resolve) => {
     let timer: NodeJS.Timeout | undefined
@@ -75,12 +94,11 @@ export function startBaking(readRows: () => Row[], file: string, interval: numbe
     const run = async () => {
       const started = Date.now()
       try {
-        const rows = readRows().map(slim)
-        const gz = await bakeInWorker(rows, signal)
+        const { gz, count } = await bakeCounted(typeof source === 'function' ? source().map(slim) : source, signal)
         if (signal.aborted) return
         await writeFile(file + '.tmp', gz, { mode: 0o644 })
         await rename(file + '.tmp', file)
-        log('snapshot_baked', { videos: rows.length, bytes: gz.length, ms: Date.now() - started })
+        log('snapshot_baked', { videos: count, bytes: gz.length, ms: Date.now() - started })
       } catch (error) { if (!signal.aborted) log('snapshot_failed', { error: String(error) }) }
     }
     const untilSlot = () => interval - (Date.now() % interval)

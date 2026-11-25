@@ -6,15 +6,15 @@ import { enqueueCandidates } from '../src/crawler.ts'
 import { DAY } from '../src/config.ts'
 import { id, video, memory, NOW, channel, searchResponse, htmlJSON } from './helpers.ts'
 
-test('zero-view hints at least seven days old are archived immediately as unverified, then upgraded', (t) => {
+test('zero-view hints at least a year old are archived immediately as unverified, then upgraded', (t) => {
   const store = memory(t)
   const items = [
-    { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 60, publishedAt: NOW - 8 * DAY, title: 'Old', author: 'Author' },
-    { id: id(2), hint: 'positive' as const, channelId: channel, publishedAt: NOW - 30 * DAY },
-    { id: id(3), hint: 'unknown' as const, channelId: channel, publishedAt: NOW - 30 * DAY },
-    { id: id(4), hint: 'zero' as const, channelId: channel, publishedAt: NOW - 6 * DAY, title: 'Too young' },
-    { id: id(5), hint: 'zero' as const, channelId: channel, minAgeDays: 7, title: 'Search label 8 days ago' },
-    { id: id(6), hint: 'zero' as const, channelId: channel, minAgeDays: 6, title: 'Search label 7 days ago' },
+    { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 60, publishedAt: NOW - 366 * DAY, title: 'Old', author: 'Author' },
+    { id: id(2), hint: 'positive' as const, channelId: channel, publishedAt: NOW - 370 * DAY },
+    { id: id(3), hint: 'unknown' as const, channelId: channel, publishedAt: NOW - 370 * DAY },
+    { id: id(4), hint: 'zero' as const, channelId: channel, publishedAt: NOW - 364 * DAY, title: 'Too young' },
+    { id: id(5), hint: 'zero' as const, channelId: channel, minAgeDays: 365, title: 'Search label: at least 365 days' },
+    { id: id(6), hint: 'zero' as const, channelId: channel, minAgeDays: 364, title: 'Search label: at least 364 days' },
     { id: id(7), hint: 'zero' as const, channelId: channel, title: 'No age known' }
   ]
   enqueueCandidates(store, items, 'q', '', NOW)
@@ -47,7 +47,7 @@ test('a matured zero candidate is archived as a hint when its check runs, even i
   const { executeTask } = await import('../src/crawler.ts')
   const { cfg } = await import('./helpers.ts')
   const store = memory(t)
-  const card = { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 60, publishedAt: Date.now() - 8 * DAY, title: 'Matured' }
+  const card = { id: id(1), hint: 'zero' as const, channelId: channel, seconds: 60, publishedAt: Date.now() - 366 * DAY, title: 'Matured' }
   store.enqueue({ id: id(1), source: 'q', queryKey: '', candidate: card }, Date.now(), Date.now(), 'zero')
   const provider = { search: async () => [], channel: async () => [], player: async () => ({ id: id(1), status: 'unknown' as const }),
     verify: async () => ({ id: id(1), status: 'unknown' as const, reason: 'missing_rss_entry' as const }) }
@@ -55,7 +55,7 @@ test('a matured zero candidate is archived as a hint when its check runs, even i
   assert.deepEqual(store.page(10).map((v) => [v.videoId, v.verification]), [[id(1), 'hint']])
 })
 
-test('search claims split about 50/45/5 between archive, older and recent', (t) => {
+test('search claims split about 75/20/5 between archive, older and recent', (t) => {
   const store = memory(t)
   for (let n = 0; n < 40; n++) for (const window of ['recent', 'older', 'archive'] as const) store.seed({ term: 't' + n, window }, NOW)
   const counts: Record<string, number> = { recent: 0, older: 0, archive: 0 }
@@ -65,5 +65,5 @@ test('search claims split about 50/45/5 between archive, older and recent', (t) 
     counts[JSON.parse(task.payload).window]++
     store.release(task, NOW + 365 * DAY)
   }
-  assert.deepEqual(counts, { archive: 20, older: 18, recent: 2 })
+  assert.deepEqual(counts, { archive: 30, older: 8, recent: 2 })
 })

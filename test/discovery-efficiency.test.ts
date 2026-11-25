@@ -17,8 +17,8 @@ test('cold searches explore every age band, weighted toward older uploads, inste
     bands[band] = (bands[band] || 0) + 1
     store.release(task, NOW + 86_400_000)
   }
-  // User decision 2026-11-20: about 50% archive, 45% older, 5% recent.
-  assert.deepEqual(bands, { archive: 15, older: 14, recent: 1 })
+  // User decision 2026-11-23: about 75% archive, 20% older, 5% recent (was 25/70/5).
+  assert.deepEqual(bands, { archive: 23, older: 6, recent: 1 })
 })
 
 test('due searches with real verified yield outrank cold terms without shortening cooldowns', (t) => {
