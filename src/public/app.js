@@ -160,7 +160,7 @@ function placeFresh(assign, centroids, nearestOf) {
 
 function mapName(d, which, names, level) {
   const m = state.map?.maps?.[which], r = d.m?.[which]
-  return m && r >= 0 ? m[names][m[level][r]] || 'Unnamed' : which === 'image' ? 'No thumbnail' : 'Not on map yet'
+  return m && r >= 0 ? m[names][m[level][r]] || 'Unnamed' : 'Not embedded yet'
 }
 async function loadMap() {
   try {
@@ -228,7 +228,7 @@ function layout(animate = true) {
       for (let r = 0; r < m.ids.length; r++) { const c = m[level][r]; const a = acc.get(c) || { x: 0, y: 0, xx: 0, yy: 0, n: 0 }; const x = m.xy[r * 2], y = m.xy[r * 2 + 1]; a.x += x; a.y += y; a.xx += x * x; a.yy += y * y; a.n++; acc.set(c, a) }
       for (const [c, a] of acc) { const x = a.x / a.n, y = a.y / a.n; state.groups.push({ x, y, r: Math.sqrt(Math.max(1, a.xx / a.n - x * x + a.yy / a.n - y * y)) * 0.8, key: m[names][c] || 'Unnamed', n: a.n, level }) }
     }
-    if (missing.length) state.groups.push({ x: 500, y: 1060, r: 80, key: 'No thumbnail', n: missing.length, level: 'l1' })
+    if (missing.length) state.groups.push({ x: 500, y: 1060, r: 80, key: 'Not embedded yet', n: missing.length, level: 'l1' })
     state.axes = null
   } else if (state.mode === 'galaxy') {
     const group = CATS[state.group].key
