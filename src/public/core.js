@@ -198,7 +198,8 @@ function dot(d, dense) {
 }
 
 /** Spherical k-means++ on title vectors; deterministic for a seed. Empty titles form their own group. */
-export function kmeans(docs, k, seed = 7, iterations = 25, minSimilarity = 0.05) {
+// User request 2026-11-28: no "Unclustered" bucket; any shared word is enough (was a 0.05 similarity floor).
+export function kmeans(docs, k, seed = 7, iterations = 25, minSimilarity = 1e-9) {
   const live = docs.filter((d) => d.idx.length)
   const assign = new Int32Array(docs.length).fill(-1)
   if (!live.length) return { assign, centroids: [], k: 0 }
@@ -233,7 +234,7 @@ export function kmeans(docs, k, seed = 7, iterations = 25, minSimilarity = 0.05)
     }
     if (!moved) break
   }
-  // Titles sharing almost nothing with any centroid stay unclustered instead of padding cluster 0.
+  // Titles sharing no word with any centroid stay apart instead of padding cluster 0.
   for (const d of live) { let top = 0; for (const c of centroids) top = Math.max(top, dot(d, c)); if (top < minSimilarity) assign[d.i] = -1 }
   return { assign, centroids, k: centroids.length }
 }
@@ -299,7 +300,7 @@ export function topicCentroids(docs, assign, k) {
   return sums
 }
 /** Topic for a video the clustering did not see; -1 like kmeans when it shares almost nothing with any topic. */
-export function nearestTopic(d, centroids, minSimilarity = 0.05) {
+export function nearestTopic(d, centroids, minSimilarity = 1e-9) {
   if (!d.idx.length) return -1
   let top = minSimilarity, arg = -1
   for (let c = 0; c < centroids.length; c++) { const s = dot(d, centroids[c]); if (s >= top) { top = s; arg = c } }

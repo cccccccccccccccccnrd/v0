@@ -70,7 +70,7 @@ test('dashboard page is self-contained, CSP-compatible and avoids HTML injection
   assert.ok(html.includes('src="/app.js"') && html.includes('href="/style.css"'))
   assert.ok(html.includes('CC BY-SA 4.0'), 'logo font attribution is shown')
   for (const id of ['fit', 'random', 'copy', 'reset']) assert.ok(html.includes(`id="${id}"`), id)
-  assert.match(js, /mode: 'scatter', group: 'topic', x: 'upload', y: 'ageNow', k: 16/)
+  assert.match(js, /mode: 'scatter', group: 'meaning', x: 'upload', y: 'ageNow', k: 16/)
   assert.doesNotMatch(html, /<script>|style="|\son\w+="/)
   assert.doesNotMatch(js, /innerHTML|insertAdjacentHTML|eval\(|new Function|https?:\/\/(?!i\.ytimg\.com|www\.youtube\.com)/)
 })

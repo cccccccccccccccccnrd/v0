@@ -8,7 +8,8 @@ const $ = (id) => document.getElementById(id)
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
 
 // Default view chosen by the user on 2026-11-09.
-function defaults() { return { mode: 'scatter', group: 'topic', x: 'upload', y: 'ageNow', k: 16 } }
+// User request 2026-11-28: open grouped by the offline meaning clusters; Title topic stays in the menu.
+function defaults() { return { mode: 'scatter', group: 'meaning', x: 'upload', y: 'ageNow', k: 16 } }
 
 const state = {
   docs: [], idf: null, topics: null, labels: [], pcs: [],
@@ -19,7 +20,7 @@ const state = {
 }
 
 const CATS = {
-  topic: { label: 'Title topic', key: (d) => d.idx.length ? state.labels[state.topics.assign[d.i]] ?? 'Unclustered' : 'No title words', token: 'topic' },
+  topic: { label: 'Title topic', key: (d) => d.idx.length ? state.labels[state.topics.assign[d.i]] ?? 'No shared title words' : 'No title words', token: 'topic' },
   script: { label: 'Writing system', key: (d) => d.script, token: 'lang' },
   year: { label: 'Upload year', key: (d) => d.year, token: 'year', sort: true },
   duration: { label: 'Duration', key: (d) => d.duration, token: 'dur', order: DURATION_ORDER },
@@ -794,6 +795,7 @@ function readHash() {
   if (p.get('q')) $('q').value = p.get('q')
 }
 const MAP_MODES = ['meaning', 'visual']
+const MAP_GROUPS = ['meaning', 'meaningSub', 'visual', 'titleKind', 'gone', 'reuse', 'repost']
 function pressModes() {
   document.body.classList.toggle('scatter', state.mode === 'scatter')
   document.body.classList.toggle('mapmode', MAP_MODES.includes(state.mode))
@@ -849,6 +851,7 @@ async function main() {
     } else rows = await loadAll(firstPage)
     state.map = map; state.loaded = true
     if (MAP_MODES.includes(state.mode) && !map) state.mode = defaults().mode
+    if (!map && MAP_GROUPS.includes(state.group)) state.group = 'topic'
     pressModes()
     progress.count = rows.length; progress.prep = 0.01; showProgress()
     await nextFrame()
